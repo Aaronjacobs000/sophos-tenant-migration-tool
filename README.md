@@ -7,7 +7,7 @@
 
 A locally run web tool for moving configuration and devices between two Sophos Fusion (formerly Sophos Central) tenants.
 
-It connects to a source and a destination tenant through the public Sophos Fusion APIs, shows policies, groups, exclusions, web filtering and devices side by side, and moves the items you pick. Exclusion and web filtering copies and device migrations can be previewed with a dry run first, and every write is recorded in an audit log. Device moves use the two-tenant migration flow and show each device's progress live.
+It connects to a source and a destination tenant through the public Sophos Fusion APIs, shows policies, groups, exclusions, web filtering and devices side by side, and moves the items you pick, including policy assignments. Policy clones, exclusion and web filtering copies and device migrations can be previewed with a dry run first, and every write is recorded in an audit log. Device moves use the two-tenant migration flow and show each device's progress live.
 
 ![Dashboard showing the source to destination route, the four migration steps and the preload counts](docs/screenshot.png)
 
@@ -30,7 +30,14 @@ Endpoint policies are grouped by product, source on the left and destination on 
 
 Compare opens one table of settings grouped by section, with readable labels (the raw setting key shows when you hover a row). A tick marks a source policy that is already on the destination. Policies pair by type and name, and a name that differs only in case pairs when just one policy matches it. A name that matches more than one is marked *ambiguous name* and is not cloned, because the destination may hold it under another case already. Clone copies a source-only policy to the bottom of the destination's priority order, just above the base policy, and ends with a list of each policy marked created, already there, or failed, with notes on settings changed to fit. Sophos moves the other policies of that type up one place to make room, and down again when the clone is deleted; for some types, such as peripheral control, that also updates their last modified time, though nothing else about them changes. Compare offers to overwrite a destination policy with the source version. Destination policies can be deleted from a row menu after a double confirmation.
 
-Policy assignments cannot be migrated because the public API rejects every `appliesTo` write. Export assignments (CSV) lists them so you can reassign them by hand.
+A clone also adds each policy's assignments on the destination, after the policy is written:
+
+- Device groups and user groups are matched by name, users by email and then name, and devices by hostname. A device group or device must also be the same type, computer or server.
+- Mirror the groups first. A device that has not moved yet is reported as pending, not failed. Once its move lands, clone the policy again: a policy already on the destination is left as it is and only its assignments are added.
+- Assignments are added to what the destination policy already has; none is removed. Each write is read back by ID.
+- Anything that matches nothing, or more than one object, is listed with the reason. Export assignments (CSV) lists every source policy's assignments, so you can set those by hand.
+
+Preview, on the Policies page and on Compare, shows what a clone or overwrite would do, including each assignment it would add and each one it can't match.
 
 When a web control policy points at a web filtering profile, the clone maps the profile ID to the destination profile with the same name. If the destination has no such profile, the policy is not cloned and the result names the profile to copy first, because Sophos refuses a web control policy without its profile. The deep match and Compare show the profile by name, so a correct clone matches.
 
@@ -226,7 +233,7 @@ data/                            # Created at run time, not committed
   - Limits: anyone who can read both the key and `data/` as your user can decrypt them, the same trust as the plain-text `.env`. On Windows the file modes are not enforced, so rely on the user profile's own permissions. If the key is lost (another computer, or the file deleted), jobs say their credentials can't be read, and you can attach them again.
   - The job page has *Remove stored credentials*. Use it once a job has finished; an entry no job uses is deleted. The tool's own `.env` is not changed.
   - They are stored rather than read from `.env` because `.env` holds only the pair the tool points at now, so a reference into it would break, or point at the wrong tenants, as soon as the tool is repointed.
-- Exclusion and web filtering copies, device migrations and group membership can be run as a dry run first from the page, which returns what would be created or changed without touching the destination. The API accepts `dryRun` on policy and group copies too.
+- Policy clones, exclusion and web filtering copies, device migrations and group membership can be run as a dry run first from the page, which returns what would be created or changed without touching the destination. The API accepts `dryRun` on group copies too.
 - Every write to a tenant, from the pages or straight through the API (copies, clones, creates, updates, deletes and migrations), is recorded in `data/audit.log` with a timestamp, ID, side, tenant ID, resource and result, including writes Sophos refuses. If an entry can't be written, for example because OneDrive or antivirus held the file past the retries, the write's own result still shows, with a warning, and the entry goes to the Logs page.
 - Deleting a policy, group or exclusion asks for confirmation twice. Overwriting a policy asks once.
 
