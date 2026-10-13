@@ -12,6 +12,8 @@
  *     error. A write that ends that way throws UnclearWriteError instead,
  *     because Sophos can answer 500 and still make the change. Any request
  *     answered 429 still waits and is sent again: Sophos did not act on it.
+ *   - An error Sophos answered with an HTTP status throws SophosHttpError,
+ *     which keeps the status, so the tool's own API can pass it on.
  *
  * HTTP client for Sophos Central APIs. Handles region-aware routing, auth
  * headers, retries, and error mapping. Supports tenant-scoped requests
@@ -43,6 +45,17 @@ export class UnclearWriteError extends Error {
   ) {
     super(`${reason.replace(/\.$/, "")}. ${advice}`);
     this.name = "UnclearWriteError";
+  }
+}
+
+/** Sophos answered with an HTTP error status: 4xx at once, or 5xx on a read after its retries. */
+export class SophosHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    // The name stays "Error", so the error reads as it did before it kept its status.
+    super(message);
   }
 }
 
@@ -217,7 +230,7 @@ export class SophosClient {
           const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000;
           if (!canRetry) {
             const body = await response.text().catch(() => "");
-            throw new Error(`Sophos API error 429: rate limited after ${attempts} attempts${body.trim() ? `: ${body.slice(0, 300)}` : ""}`);
+            throw new SophosHttpError(`Sophos API error 429: rate limited after ${attempts} attempts${body.trim() ? `: ${body.slice(0, 300)}` : ""}`, 429);
           }
           console.error(
             `[sophos-client] Rate limited, waiting ${waitMs}ms (attempt ${attempt + 1})`,
@@ -239,9 +252,9 @@ export class SophosClient {
             ? `Sophos API error ${response.status}: ${parsed.error ?? "UnknownError"}${parsed.message ? ` - ${parsed.message}` : ""}${parsed.correlationId ? ` (correlationId: ${parsed.correlationId})` : ""}`
             : `Sophos API error (${response.status}): ${errorBody.slice(0, 500)}`;
 
-          if (response.status < 500) throw new Error(msg);
+          if (response.status < 500) throw new SophosHttpError(msg, response.status);
           if (!isRead) throw new UnclearWriteError(msg, method, response.status);
-          await retryRead(new Error(msg));
+          await retryRead(new SophosHttpError(msg, response.status));
           continue;
         }
 
