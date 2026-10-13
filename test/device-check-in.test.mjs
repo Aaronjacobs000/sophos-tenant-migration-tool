@@ -16,7 +16,9 @@ const { getJob } = await import("../backend/dist/services/migration-store.js");
 const OLD = "00000000-0000-4000-8000-000000000001";
 const NEW = "00000000-0000-4000-8000-00000000000a";
 const STALE = "00000000-0000-4000-8000-00000000000b";
-const at = (min) => new Date(Date.UTC(2026, 8, 25, 22, 34) + min * 60e3).toISOString();
+// Two hours ago, so every time below (up to 90 minutes on) is past, and the job is inside its 14 days.
+const T0 = Date.now() - 2 * 60 * 60e3;
+const at = (min) => new Date(T0 + min * 60e3).toISOString();
 
 // Shapes measured on 26/09/2026: the new record is registered at the handover with lastSeenAt equal to
 // registeredAt; the stale record is the same hostname left behind by an earlier move.
