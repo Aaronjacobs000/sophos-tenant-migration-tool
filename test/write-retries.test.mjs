@@ -1,7 +1,7 @@
 // Only reads are retried. Sophos can answer 500 to a write and still make the change (seen live on
 // 26/09/2026), so a write is sent once, and a create or an addition that gets no clear answer is read
 // back: made, with a note, or failed with a warning that it may still have gone through.
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createFakeSophos, SRC, DST, page } from "./helpers/fake-sophos.mjs";
@@ -16,7 +16,7 @@ const { setReadBackDelays } = await import("../backend/dist/services/write-check
 const { mirrorGroups, mirrorUserGroups } = await import("../backend/dist/services/group-mirror.js");
 const { copyExclusions } = await import("../backend/dist/services/exclusion-copier.js");
 const { copyWebFilters } = await import("../backend/dist/services/web-filter-copier.js");
-const { migratePolicies } = await import("../backend/dist/services/policy-migrator.js");
+const { migratePolicies, setRecentCloneWindow } = await import("../backend/dist/services/policy-migrator.js");
 const { startMigration } = await import("../backend/dist/services/device-migrator.js");
 const { getJob } = await import("../backend/dist/services/migration-store.js");
 const { publicJob } = await import("../backend/dist/services/job-view.js");
@@ -24,6 +24,11 @@ const { publicJob } = await import("../backend/dist/services/job-view.js");
 // No waiting in tests: the read retry backoff and the read-back waits.
 SophosClient.prototype.sleep = async () => {};
 setReadBackDelays([0, 0, 0]);
+// Each test starts with no recent clones: several clone a policy of the same name.
+beforeEach(() => {
+  setRecentCloneWindow(0);
+  setRecentCloneWindow(60_000);
+});
 
 const ADVICE = /The change may still have gone through: check the destination before trying again\.$/;
 // After a read-back that looked and found nothing: where it looked, what it found, the caveat, and advice that fits.
@@ -420,15 +425,26 @@ test("policy clone: the same policy twice, the second answered 500, is not taken
     assert.equal(res[1].ok, false, "before the fix the read-back found the first clone and called this one created");
     assert.match(res[1].error, /found no new threat-protection policy named "Laptops"/);
 
-    // A third of the same name after that unclear one is not sent.
+    // A run straight after sends nothing: the unclear clone may yet show in the list (about 22 s, measured 13/10/2026).
     fake.reset();
     n = 1;
     pol.dst = [];
+    const soon = await migratePolicies({ policyIds: ["sp-1"] });
+    assert.equal(soon[0].ok, false);
+    assert.match(soon[0].error, /^not sent: this tool cloned this policy \d+ s ago and could not confirm that copy/);
+    assert.equal(fake.writes().length, 0, "before 0.4.2 this sent a second create");
+
+    // Once that minute has passed, a third of the same name after an unclear one in the same run is not sent.
+    setRecentCloneWindow(0);
+    setRecentCloneWindow(60_000);
+    fake.reset();
     const again = await migratePolicies({ policyIds: ["sp-1", "sp-1"] });
     assert.equal(again[0].ok, false);
     assert.match(again[1].error, /^not sent: an earlier create in this run with the same name/);
     assert.equal(fake.writes().length, 1);
   } finally {
+    setRecentCloneWindow(0);
+    setRecentCloneWindow(60_000);
     fake.on(DST, "POST", "/endpoint/v1/policies", (req) => {
       if (policyCreateMakesIt) pol.dst.push({ id: "dpol-new", ...req.body });
       return { status: 500, body: { error: "InternalError", message: "Must provide an allowed value for setting (x.y)." } };

@@ -36,10 +36,12 @@ import { listProfiles } from "../sophos/api/web-filters.js";
 import { listRuntimeDetectionProfiles } from "../sophos/api/runtime-detection.js";
 import { requireContext } from "../state.js";
 import { auditOrWarn } from "./audit-log.js";
-import { createChecked, earlierUnclear, isUnclearWrite } from "./write-check.js";
+import { createChecked, earlierUnclear, isUnclearWrite, policyReadBackDelays } from "./write-check.js";
+import { SophosHttpError } from "../sophos/client/sophos-client.js";
 import { pairPolicy } from "../compare/policy-pairing.js";
 import { applyAssignments, planAssignments, tenantDirectory, type AssignmentReport } from "./policy-assignments.js";
 import type { SophosPolicy } from "../sophos/types/migration.js";
+import type { TenantContext } from "../sophos/tenant-context.js";
 
 export interface MigratePoliciesRequest {
   policyIds: string[];
@@ -83,6 +85,8 @@ export async function migratePolicies(
     listPolicies(src.client, src.tenantId),
     listPolicies(dst.client, dst.tenantId),
   ]);
+  // Clones from the last minute that the list may not show yet (recentClones).
+  destExisting.push(...(await recentClonesNotListed(dst, destExisting)));
   const destIds = new Set(destExisting.map((p) => p.id));
   // Type and name of each clone that got no clear answer: a second one could be a duplicate.
   const unclearClones = new Set<string>();
@@ -255,6 +259,11 @@ export async function migratePolicies(
       results[i] = { sourceId, sourceName: sourcePolicy.name, ok: false, action: req.dryRun ? "dry-run-create" : "create", error: earlierUnclear() };
       continue;
     }
+    const recent = match ? undefined : recentClone(dst.tenantId, sourcePolicy.type, sourcePolicy.name);
+    if (recent) {
+      results[i] = { sourceId, sourceName: sourcePolicy.name, ok: false, action: req.dryRun ? "dry-run-create" : "create", error: recent };
+      continue;
+    }
 
     if (req.dryRun) {
       results[i] = {
@@ -285,13 +294,16 @@ export async function migratePolicies(
           if (match) {
             result = await updatePolicy(dst.client, dst.tenantId, match.id, body);
           } else {
+            // The list can take about 22 s to show a new policy, so the read-back waits longer than for other copies.
             ({ value: result, note } = await createChecked(
               () => createPolicy(dst.client, dst.tenantId, body),
-              async () => (await listPolicies(dst.client, dst.tenantId))
+              async () => (await listPolicies(dst.client, dst.tenantId, { policyType: body.type }))
                 .find((p) => p.type === body.type && p.name === body.name && !destIds.has(p.id)),
               "the policy",
               { where: "the destination's policies", found: `no new ${body.type} policy named "${body.name}"` },
+              policyReadBackDelays(),
             ));
+            if (result.id) rememberClone(dst.tenantId, body.type!, body.name!, result.id);
           }
           // A later read-back in this run must not take this clone for its own.
           if (!match && result.id) destIds.add(result.id);
@@ -338,7 +350,10 @@ export async function migratePolicies(
       };
     } catch (err) {
       const msg = errMsg(err);
-      if (!match && isUnclearWrite(err)) unclearClones.add(`${sourcePolicy.type}:${sourcePolicy.name}`);
+      if (!match && isUnclearWrite(err)) {
+        unclearClones.add(`${sourcePolicy.type}:${sourcePolicy.name}`);
+        rememberClone(dst.tenantId, sourcePolicy.type, sourcePolicy.name);
+      }
       await auditOrWarn({
         side: "dest",
         tenantId: dst.tenantId,
@@ -385,6 +400,76 @@ export async function migratePolicies(
   }
 
   return results;
+}
+
+/**
+ * Policies this tool cloned on each destination in the last minute, by
+ * tenant, type and name. Sophos can take about 22 s to list a new policy
+ * (measured 13/10/2026), so a clone run soon after another would not find the
+ * first copy in the list and would make a second. A run fetches each recorded
+ * policy by ID, which finds it at once, and pairs with it. A clone that got no
+ * clear answer, or whose copy could not be read, blocks another clone of that
+ * policy until the minute has passed.
+ */
+const recentClones = new Map<string, { ids: string[]; unclear: boolean; at: number }>();
+let recentWindowMs = 60_000;
+const cloneKey = (tenantId: string, type: string, name: string) => `${tenantId}\n${type}\n${name.trim().toLowerCase()}`;
+
+/** Tests shorten the window, or clear it with 0. */
+export function setRecentCloneWindow(ms: number): void {
+  recentWindowMs = ms;
+  if (ms <= 0) recentClones.clear();
+}
+
+function rememberClone(tenantId: string, type: string, name: string, id?: string): void {
+  const key = cloneKey(tenantId, type, name);
+  const entry = recentClones.get(key) ?? { ids: [], unclear: false, at: 0 };
+  if (id && !entry.ids.includes(id)) entry.ids.push(id);
+  if (!id) entry.unclear = true;
+  entry.at = Date.now();
+  recentClones.set(key, entry);
+}
+
+/**
+ * The recent clones on this destination that its list does not show yet,
+ * read by ID. One that is gone (404) is forgotten; one that can't be read
+ * stays recorded, so recentClone blocks another clone of it.
+ */
+async function recentClonesNotListed(dst: TenantContext, listed: SophosPolicy[]): Promise<SophosPolicy[]> {
+  const found: SophosPolicy[] = [];
+  const listedIds = new Set(listed.map((p) => p.id));
+  for (const [key, entry] of recentClones) {
+    if (Date.now() - entry.at > recentWindowMs) {
+      recentClones.delete(key);
+      continue;
+    }
+    if (!key.startsWith(`${dst.tenantId}\n`)) continue;
+    for (const id of [...entry.ids]) {
+      if (listedIds.has(id)) continue;
+      try {
+        const policy = await getPolicy(dst.client, dst.tenantId, id);
+        if (policy?.id === id) {
+          found.push(policy);
+          listedIds.add(id);
+        } else {
+          entry.ids = entry.ids.filter((x) => x !== id);
+        }
+      } catch (err) {
+        if (err instanceof SophosHttpError && err.status === 404) entry.ids = entry.ids.filter((x) => x !== id);
+        else entry.unclear = true;
+      }
+    }
+    if (!entry.ids.length && !entry.unclear) recentClones.delete(key);
+  }
+  return found;
+}
+
+/** Why a clone of this policy would not be sent now, when a recent one is unaccounted for. */
+function recentClone(tenantId: string, type: string, name: string): string | undefined {
+  const entry = recentClones.get(cloneKey(tenantId, type, name));
+  if (!entry?.unclear || Date.now() - entry.at > recentWindowMs) return;
+  const seconds = Math.max(1, Math.round((Date.now() - entry.at) / 1000));
+  return `not sent: this tool cloned this policy ${seconds} s ago and could not confirm that copy, and Sophos can take about 25 s to list a new policy, so another clone now could make a duplicate. Wait a minute, then try again: a copy on the destination by then is found and left as it is`;
 }
 
 export interface WebProfileMap {

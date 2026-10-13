@@ -18,9 +18,22 @@ export { UnclearWriteError };
 /** The waits before each read-back, in milliseconds: reads at about 1, 4 and 10 s. */
 let delaysMs = [1000, 3000, 6000];
 
-/** Tests shorten the waits. */
-export function setReadBackDelays(ms: number[]): void {
+/**
+ * The waits for a policy's read-back: reads at about 1, 4, 10, 18 and 26 s.
+ * Sophos can take up to about 22 s to list a new policy (measured 13/10/2026),
+ * while GET by ID finds it at once.
+ */
+let policyDelaysMs = [1000, 3000, 6000, 8000, 8000];
+
+/** Tests shorten the waits. The policy waits follow unless given. */
+export function setReadBackDelays(ms: number[], policyMs: number[] = ms): void {
   delaysMs = ms;
+  policyDelaysMs = policyMs;
+}
+
+/** The waits for a read-back that looks in the policy list. */
+export function policyReadBackDelays(): number[] {
+  return policyDelaysMs;
 }
 
 export function isUnclearWrite(err: unknown): err is UnclearWriteError {
@@ -39,10 +52,13 @@ export interface ReadBack<T> {
  * read that fails counts as a miss, and when every read fails the result
  * says why, so "not found" is never claimed for a destination nobody read.
  */
-export async function readBack<T>(find: () => Promise<T | null | undefined>): Promise<ReadBack<T>> {
+export async function readBack<T>(
+  find: () => Promise<T | null | undefined>,
+  delays: number[] = delaysMs,
+): Promise<ReadBack<T>> {
   let read = false;
   let lastError: unknown;
-  for (const ms of delaysMs) {
+  for (const ms of delays) {
     await new Promise((r) => setTimeout(r, ms));
     try {
       const found = await find();
@@ -88,10 +104,10 @@ export interface ReadBackMiss {
 }
 
 /** "three times over about 10 seconds", from the waits. */
-function readsSaid(): string {
-  const n = delaysMs.length;
+function readsSaid(delays: number[]): string {
+  const n = delays.length;
   const times = n === 1 ? "once" : n === 2 ? "twice" : n === 3 ? "three times" : `${n} times`;
-  const seconds = Math.round(delaysMs.reduce((a, b) => a + b, 0) / 1000);
+  const seconds = Math.round(delays.reduce((a, b) => a + b, 0) / 1000);
   return seconds >= 1 ? `${times} over about ${seconds} seconds` : times;
 }
 
@@ -101,7 +117,7 @@ function readsSaid(): string {
  * found, that a miss is not proof, and what to do next; or, when nothing
  * could be read, what to check by hand.
  */
-export function notFound(err: UnclearWriteError, miss: ReadBackMiss, unread?: string): UnclearWriteError {
+export function notFound(err: UnclearWriteError, miss: ReadBackMiss, unread?: string, delays: number[] = delaysMs): UnclearWriteError {
   const reason = err.reason.replace(/\.$/, "");
   if (unread) {
     return new UnclearWriteError(
@@ -112,7 +128,7 @@ export function notFound(err: UnclearWriteError, miss: ReadBackMiss, unread?: st
     );
   }
   return new UnclearWriteError(
-    `${reason}. The tool read ${miss.where} ${readsSaid()} and found ${miss.found}`,
+    `${reason}. The tool read ${miss.where} ${readsSaid(delays)} and found ${miss.found}`,
     err.method,
     err.status,
     `${READ_LAG_CAVEAT} ${miss.advice ?? CREATE_RETRY_ADVICE}`,
@@ -138,13 +154,14 @@ export async function createChecked<T>(
   find: () => Promise<T | null | undefined>,
   what: string,
   miss: ReadBackMiss,
+  delays: number[] = delaysMs,
 ): Promise<{ value: T; note?: string }> {
   try {
     return { value: await create() };
   } catch (err) {
     if (!isUnclearWrite(err)) throw err;
-    const found = await readBack(find);
+    const found = await readBack(find, delays);
     if (found.value !== undefined) return { value: found.value, note: foundNote(err, what) };
-    throw notFound(err, miss, found.unread);
+    throw notFound(err, miss, found.unread, delays);
   }
 }
