@@ -1,6 +1,6 @@
 {
   "name": "sophos-tenant-migration-tool",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Unofficial, locally run web tool for migrating configuration and devices between two Sophos Fusion (formerly Sophos Central) tenants.",
   "type": "module",
   "private": true,
