@@ -52,10 +52,12 @@ test("groups: the mirror lists every group, counted as the list tags them", asyn
   assert.match(list, /plural\(n\.created, "group"\)/);
 });
 
-test("policies: both clone buttons show the results list", async () => {
+test("policies: both clone buttons and the preview show the results list", async () => {
   const js = await page("page-policies.js");
-  assert.equal([...js.matchAll(/api\.post\("\/api\/migrate\/policies"/g)].length, 2);
+  assert.equal([...js.matchAll(/api\.post\("\/api\/migrate\/policies"/g)].length, 3);
   assert.equal([...js.matchAll(/reportClone\(res\.results \?\? \[\]\);/g)].length, 2);
+  assert.equal([...js.matchAll(/reportClone\(res\.results \?\? \[\], true\);/g)].length, 1, "the preview");
+  assert.match(js, /policyIds: ids,\s*dryRun: true,/);
   assert.doesNotMatch(js, /filter\(\(r\) => r\.ok\)/);
   const report = js.slice(js.indexOf("function reportClone"), js.indexOf("function summarizeAssignments"));
   assert.match(report, /const n = countOutcomes\(results\);/);
@@ -63,12 +65,13 @@ test("policies: both clone buttons show the results list", async () => {
   assert.match(report, /outcome: outcomeOf\(r\)/);
   assert.match(report, /notes: notesOf\(r\)/);
   assert.match(report, /plural\(n\.created, "policy", "policies"\)/);
+  assert.match(report, /title: dryRun \? "Preview: nothing was written" : "Clone results"/);
 });
 
 test("policy Compare: an overwrite or clone shows the results list, which stays open while Compare runs again", async () => {
   const js = await page("page-policy-compare.js");
   const write = js.slice(js.indexOf("async function cloneToDest"), js.indexOf("function showResults"));
-  assert.equal([...js.matchAll(/api\.post\("\/api\/migrate\/policies"/g)].length, 1);
+  assert.equal([...js.matchAll(/api\.post\("\/api\/migrate\/policies"/g)].length, 2, "the write and its preview");
   assert.match(write, /showResults\(results, overwrite\);/);
   // A request that fails outright is a failed row with its reason.
   assert.match(write, /results = \[\{ sourceId: state\.sourcePolicy\.id, ok: false, [^\]]*error: err\.message/);
@@ -77,7 +80,7 @@ test("policy Compare: an overwrite or clone shows the results list, which stays 
   assert.match(write, /if \(results\.some\(\(r\) => r\.ok\)\) \{\s*await refreshSection\("dest", "policies"\)\.catch\(\(\) => \{\}\);\s*await load\(\);\s*\}/);
   assert.doesNotMatch(js, /location\.reload/);
   const list = js.slice(js.indexOf("function showResults"));
-  assert.match(list, /outcome: r\.ok && r\.action === "overwrite" \? "updated" : outcomeOf\(r\)/);
+  assert.match(list, /outcome: r\.ok && r\.action === "overwrite" \? "updated" : r\.ok && r\.action === "dry-run-overwrite" \? "would-update" : outcomeOf\(r\)/);
   assert.match(list, /error: r\.error/);
   assert.match(list, /notes: notesOf\(r\)/);
   assert.match(list, /resultsModal\(\{/);

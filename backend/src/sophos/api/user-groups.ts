@@ -4,6 +4,7 @@
 
 import type { SophosClient } from "../client/sophos-client.js";
 import type { SophosPagedResponse } from "../types/sophos.js";
+import { listAllPages } from "./paging.js";
 
 export interface SophosUserGroup {
   id: string;
@@ -35,6 +36,14 @@ export async function listUserGroups(
     page++;
   }
   return items;
+}
+
+/** Every user group, reading all pages: without pageTotal the API gives no page count. */
+export async function listAllUserGroups(
+  client: SophosClient,
+  tenantId: string,
+): Promise<SophosUserGroup[]> {
+  return listAllPages<SophosUserGroup>(client, tenantId, USER_GROUPS_PATH);
 }
 
 export async function createUserGroup(

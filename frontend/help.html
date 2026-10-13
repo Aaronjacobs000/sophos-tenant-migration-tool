@@ -25,7 +25,7 @@
           <strong>destination</strong>, and moves configuration and devices between them through the public
           Sophos APIs. It does not copy the whole tenant. You choose what moves and when, and copies and migrations are logged.</p>
         <ul>
-          <li>Endpoint policies: list, compare settings, and clone or overwrite on the destination.</li>
+          <li>Endpoint policies: list, compare settings, and clone or overwrite on the destination with their assignments.</li>
           <li>Web filtering: copy site lists and profiles.</li>
           <li>Endpoint and user groups: mirror by name and description. Members follow after a device move (see below).</li>
           <li>Exclusions and lists: scanning, allowed and blocked items, isolation, intrusion prevention, exploit mitigation, Website Management and TLS decryption exclusions.</li>
@@ -108,6 +108,11 @@
 
       <section class="panel-card">
         <h2>Policies</h2>
+        <p>A clone adds each policy's assignments on the destination: device groups and user groups matched by name,
+          users by email and then name, and devices by hostname. Mirror the groups first. A device that has not moved
+          yet is pending: once its move lands, clone the policy again. A policy already on the destination is left as
+          it is, and only its assignments are added. Anything not matched is listed with the reason, and
+          <strong>Export assignments (CSV)</strong> lists every source assignment for setting by hand.</p>
         <p>A Linux runtime detection policy uses a detection profile. The clone points it at the destination profile
           with the same name, at that profile's latest version. The tool does not copy these profiles: with no such
           profile the policy is not cloned, and the result names the profile to create on the destination first.</p>
@@ -121,21 +126,21 @@
           <li>Website Management entries (Exclusions page), because web control policies refer to their tags.</li>
           <li>Web filtering site lists, then profiles.</li>
           <li>Linux runtime detection profiles, created on the destination by hand, because their policies refer to them.</li>
-          <li>Groups and policies.</li>
+          <li>Groups, then policies, so each policy can be assigned to the groups with the same names.</li>
           <li>Other exclusions and lists.</li>
-          <li>Devices, then group membership from the job page.</li>
+          <li>Devices, then group membership from the job page, then clone the policies again to add the devices they are assigned to.</li>
         </ol>
       </section>
 
       <section class="panel-card">
         <h2>Dry runs</h2>
-        <p>Exclusions, web filtering, device migrations and group membership can be previewed first: the
-          <strong>Preview</strong> buttons on the Exclusions and Web filtering pages, <strong>Preview (dry run)</strong>
-          on Start migration, and <strong>Preview</strong> on the job page's Group membership card return the plan the
-          server <em>would</em> carry out without touching the destination. Use them the first few times until you are
-          comfortable with what gets created.</p>
-        <p>The Policies and Groups pages have no preview: <strong>Clone</strong> and <strong>Mirror</strong> write to
-          the destination as soon as you confirm.</p>
+        <p>Policies, exclusions, web filtering, device migrations and group membership can be previewed first: the
+          <strong>Preview</strong> buttons on the Policies, Compare, Exclusions and Web filtering pages,
+          <strong>Preview (dry run)</strong> on Start migration, and <strong>Preview</strong> on the job page's
+          Group membership card return the plan the server <em>would</em> carry out without touching the destination.
+          A policy preview lists each assignment it would add and each one it can't match, with the reason. Use them
+          the first few times until you are comfortable with what gets created.</p>
+        <p>The Groups page has no preview: <strong>Mirror</strong> writes to the destination as soon as you confirm.</p>
       </section>
 
       <section class="panel-card">

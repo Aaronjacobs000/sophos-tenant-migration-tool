@@ -826,6 +826,7 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 
 /* ================= policy compare ================= */
 .compare-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.compare-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .compare-title { font-size: 19px; letter-spacing: -0.02em; }
 .compare-meta-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
 .compare-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 14px; }

@@ -1,10 +1,12 @@
 /**
- * Sophos /common/v1/directory/users wrappers. Read-only — used to resolve
- * user IDs to human-readable names when exporting policy assignments.
+ * Sophos /common/v1/directory/users wrappers. Read-only: used to resolve
+ * user IDs to names when exporting policy assignments, and to match the users
+ * a policy is assigned to when it is cloned.
  */
 
 import type { SophosClient } from "../client/sophos-client.js";
 import type { SophosPagedResponse } from "../types/sophos.js";
+import { listAllPages } from "./paging.js";
 
 export interface SophosUser {
   id: string;
@@ -35,4 +37,12 @@ export async function listUsers(
     page++;
   }
   return items;
+}
+
+/** Every user, reading all pages: without pageTotal the API gives no page count. */
+export async function listAllUsers(
+  client: SophosClient,
+  tenantId: string,
+): Promise<SophosUser[]> {
+  return listAllPages<SophosUser>(client, tenantId, USERS_PATH);
 }

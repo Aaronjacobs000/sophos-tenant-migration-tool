@@ -2,12 +2,12 @@
  * Reads policies from source and creates them on destination.
  * Supports dry-run mode that returns the plan without touching dest.
  *
- * Policy ASSIGNMENTS (`appliesTo`) are deliberately NOT migrated: the Central
- * public API rejects every `appliesTo` write (verified 02/07/2026 on live
- * tenants: create and PATCH, string and {id} ref shapes, computer and server
- * policies, against targets that definitely exist all fail with
- * 500 "Error processing data"; GET returns the block fine). Use the Policies
- * page "Export assignments (CSV)" to capture them for manual re-assignment.
+ * After the policies are written, each one's assignments (`appliesTo`) are
+ * added on the destination: every policy created, overwritten or already
+ * there, and in a dry run the plan. Targets are matched by name, email or
+ * hostname, written in the shape Sophos accepts and read back by ID (see
+ * policy-assignments.ts). Mirror the groups first. Anything not matched is
+ * listed with the reason; Export assignments (CSV) lists every assignment.
  *
  * A clone goes to the bottom of the destination's priority order, just
  * above the base policy, whatever its priority on the source; an overwrite
@@ -38,6 +38,7 @@ import { requireContext } from "../state.js";
 import { auditOrWarn } from "./audit-log.js";
 import { createChecked, earlierUnclear, isUnclearWrite } from "./write-check.js";
 import { pairPolicy } from "../compare/policy-pairing.js";
+import { applyAssignments, planAssignments, tenantDirectory, type AssignmentReport } from "./policy-assignments.js";
 import type { SophosPolicy } from "../sophos/types/migration.js";
 
 export interface MigratePoliciesRequest {
@@ -63,6 +64,11 @@ export interface MigratePolicyResult {
   adjustments?: string[];
   /** Notes for the results list, such as a create Sophos answered unclearly but a read-back found. */
   notes?: string[];
+  /**
+   * The source policy's assignments on the destination: each target set, already
+   * there, pending or not matched, with the reason. Absent when it has none.
+   */
+  assignments?: AssignmentReport;
 }
 
 export async function migratePolicies(
@@ -359,6 +365,23 @@ export async function migratePolicies(
         adjustments: adjustments.length ? adjustments : undefined,
       };
     }
+  }
+
+  // Assignments go on once the policies are written, in the same order. A
+  // policy that was not written, or could not be, gets none.
+  const srcDir = tenantDirectory(src);
+  const dstDir = tenantDirectory(dst);
+  for (const i of order) {
+    const r = results[i]!;
+    const sourcePolicy = fetched[i]!;
+    if (!r.ok || sourcePolicy instanceof Error) continue;
+    const plan = await planAssignments(sourcePolicy.appliesTo, srcDir, dstDir);
+    if (!plan) continue;
+    r.assignments = await applyAssignments(dst, r.destId, plan, {
+      dryRun: req.dryRun === true,
+      sourceId: r.sourceId,
+      name: r.destName ?? r.sourceName,
+    });
   }
 
   return results;

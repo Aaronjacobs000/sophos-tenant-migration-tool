@@ -18,12 +18,13 @@
     <h1>Endpoint policies</h1>
     <p class="page-lead">Policies grouped by product, source on the left and destination on the right.
       Clone what only exists on the source, or compare a policy that exists on both sides. A tick marks a source
-      policy that is already on the destination.</p>
+      policy that is already on the destination. A clone adds each policy's assignments where the destination has a
+      match: mirror the groups first.</p>
 
     <div class="panel-toolbar toolbar-bar">
       <input type="search" id="search" placeholder="Filter by name" />
       <button id="export-assignments" class="btn btn-small"
-        title="Export Peripheral Control and Application Control policy assignments (source tenant, endpoint and server variants) to CSV. Assignments cannot be migrated: the Sophos public API does not accept assignment writes, so use this export to re-assign them by hand in the destination."><span data-icon="download"></span>Export assignments (CSV)</button>
+        title="Export every source policy's assignments (users, user groups, devices and device groups) to CSV, for setting by hand any that a clone could not match on the destination."><span data-icon="download"></span>Export assignments (CSV)</button>
       <span class="spacer"></span>
       <label class="checkbox">
         <input type="checkbox" id="hide-matching" disabled />
@@ -40,6 +41,7 @@
     <span class="basket-text"><strong id="basket-count">0</strong> <span id="basket-noun">source policies selected</span></span>
     <span class="basket-sep"></span>
     <button id="basket-compare" class="btn">Compare</button>
+    <button id="basket-preview" class="btn">Preview</button>
     <button id="basket-clone" class="btn btn-primary">Clone to destination</button>
   </div>
 

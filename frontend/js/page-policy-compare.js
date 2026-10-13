@@ -8,7 +8,7 @@ import {
   renderValue,
 } from "./diff-view.js";
 import { toast } from "./toast.js";
-import { plural, resultsModal, outcomeOf, notesOf } from "./ui.js";
+import { plural, resultsModal, outcomeOf, notesOf, countAssignments } from "./ui.js";
 import { refreshSection } from "./preload-client.js";
 
 const state = {
@@ -87,7 +87,10 @@ function renderHeader() {
           ${state.destPolicy ? `<span class="hint">${matchedBy()}</span>` : state.ambiguous ? `<span class="tag tag-warn">Ambiguous name</span>` : `<span class="tag tag-src">No destination match</span>`}
         </div>
       </div>
-      ${state.ambiguous && !state.destPolicy ? "" : `<button id="clone-btn" class="btn btn-primary">${escapeHtml(cloneLabel)}</button>`}
+      <span class="compare-actions">
+        ${state.ambiguous && !state.destPolicy ? "" : `<button id="preview-btn" class="btn">Preview</button>`}
+        ${state.ambiguous && !state.destPolicy ? "" : `<button id="clone-btn" class="btn btn-primary">${escapeHtml(cloneLabel)}</button>`}
+      </span>
     </header>
     ${summaryHtml}
     ${metaRows}
@@ -95,6 +98,7 @@ function renderHeader() {
 
   // No clone when the name is ambiguous: the destination may hold this policy under another case already.
   document.getElementById("clone-btn")?.addEventListener("click", cloneToDest);
+  document.getElementById("preview-btn")?.addEventListener("click", previewClone);
 
   // Show the compare card if we have a destination to compare against
   if (state.destPolicy) {
@@ -190,7 +194,7 @@ async function cloneToDest() {
   const rename = state.destPolicy && state.destPolicy.name !== state.sourcePolicy.name
     ? `\n\nThe destination policy "${state.destPolicy.name}" is renamed "${state.sourcePolicy.name}".`
     : "";
-  if (!confirm(`Are you sure you want to ${verb}?${rename}`)) return;
+  if (!confirm(`Are you sure you want to ${verb}?${rename}\n\nIts assignments are added where the destination has a match.`)) return;
   let results;
   try {
     const res = await api.post("/api/migrate/policies", {
@@ -211,24 +215,55 @@ async function cloneToDest() {
   }
 }
 
+/** The overwrite or clone as a dry run: what it would write, and each assignment it would add or can't match. */
+async function previewClone() {
+  const overwrite = !!state.destPolicy;
+  let results;
+  try {
+    const res = await api.post("/api/migrate/policies", {
+      policyIds: [state.sourcePolicy.id],
+      overwrite,
+      dryRun: true,
+    });
+    results = res.results ?? [];
+  } catch (err) {
+    toast(err.message || "Preview failed", "err");
+    return;
+  }
+  showResults(results, overwrite, true);
+}
+
 /**
  * The results list, as on the Policies page: the policy tagged updated for an
  * overwrite, created or already there for a clone, or failed with the reason,
- * with notes on settings changed to fit.
+ * with notes on settings changed to fit and a line per assignment. A preview
+ * tags it would update or would create.
  */
-function showResults(results, overwrite) {
+function showResults(results, overwrite, dryRun = false) {
   const rows = results.map((r) => ({
-    outcome: r.ok && r.action === "overwrite" ? "updated" : outcomeOf(r),
+    outcome: r.ok && r.action === "overwrite" ? "updated" : r.ok && r.action === "dry-run-overwrite" ? "would-update" : outcomeOf(r),
     text: state.sourcePolicy.name,
     error: r.error,
     notes: notesOf(r),
   }));
-  const done = overwrite ? "updated" : "created";
+  const done = dryRun ? (overwrite ? "would-update" : "would-create") : overwrite ? "updated" : "created";
   const count = (outcome) => rows.filter((r) => r.outcome === outcome).length;
-  toast(`${overwrite ? "Updated" : "Cloned"} ${count(done)} / failed ${count("failed")}`, count("failed") ? "err" : "ok");
+  const a = countAssignments(results);
+  const bad = count("failed") > 0 || a.failed > 0;
+  const csv = a.pending + a["not-matched"] + a.failed ? " Export assignments (CSV) on the Policies page lists every source assignment, for setting the rest by hand." : "";
+  // Assignment counts only for a policy that has assignments.
+  const assigned = results.some((r) => r.assignments);
+  const extra = (n, verb) => (assigned ? `, ${plural(n, "assignment")} ${verb}` : "");
+  if (dryRun) {
+    toast(`Preview: ${count("failed") ? "would fail" : overwrite ? "would update" : "would clone"}${extra(a["will-set"], "to add")}`, bad ? "err" : "ok");
+  } else {
+    toast(`${overwrite ? "Updated" : "Cloned"} ${count(done)} / failed ${count("failed")}${extra(a.set, "added")}`, bad ? "err" : "ok");
+  }
   resultsModal({
-    title: overwrite ? "Overwrite results" : "Clone results",
-    summary: `${plural(count(done), "policy", "policies")} ${done} on the destination. Each write is in data/audit.log.`,
+    title: dryRun ? "Preview: nothing was written" : overwrite ? "Overwrite results" : "Clone results",
+    summary: dryRun
+      ? `${plural(count(done), "policy", "policies")} would be ${overwrite ? "updated" : "created"} on the destination${assigned ? `, and ${plural(a["will-set"], "assignment")} added` : ""}.${csv}`
+      : `${plural(count(done), "policy", "policies")} ${done} on the destination${assigned ? `, and ${plural(a.set, "assignment")} added` : ""}. Each write is in data/audit.log.${csv}`,
     groups: [{ title: productLabel(state.sourcePolicy.type), rows }],
   });
 }

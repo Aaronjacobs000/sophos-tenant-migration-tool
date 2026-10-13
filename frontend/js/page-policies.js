@@ -4,7 +4,7 @@ import { toast } from "./toast.js";
 import { getCachedSection, refreshSection } from "./preload-client.js";
 import { makeSortable } from "./sortable.js";
 import { icon } from "./icons.js";
-import { rowMenu, wireRowMenus, stackBar, onDestCell, ON_DEST_HEADER, plural, resultsModal, outcomeOf, countOutcomes, notesOf } from "./ui.js";
+import { rowMenu, wireRowMenus, stackBar, onDestCell, ON_DEST_HEADER, plural, resultsModal, outcomeOf, countOutcomes, notesOf, countAssignments } from "./ui.js";
 import { pairPolicy } from "./policy-pairing.js";
 
 // Friendly labels for known Sophos endpoint policy types. Anything not in
@@ -29,16 +29,6 @@ const PRODUCT_LABELS = {
   "exploit-mitigation": "Exploit Mitigation",
   "wireless": "Wireless",
 };
-
-// Policy types whose `appliesTo` assignments are exported, mirroring
-// scripts/export-policy-assignments.mjs. Server policies are distinct types
-// in the API, so both the endpoint and server variants are included.
-const ASSIGNMENT_POLICY_TYPES = [
-  "peripheral-control",
-  "application-control",
-  "server-peripheral-control",
-  "server-application-control",
-];
 
 // CSV columns, identical to the standalone export script.
 const ASSIGNMENT_CSV_HEADER = [
@@ -478,7 +468,7 @@ function wireRows() {
   document.querySelectorAll("[data-clone]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const id = e.currentTarget.dataset.clone;
-      if (!confirm("Clone this policy to destination?\n\nIt goes to the bottom of the destination's priority order, above the base policy.")) return;
+      if (!confirm("Clone this policy to destination?\n\nIt goes to the bottom of the destination's priority order, above the base policy. Its assignments are added where the destination has a match.")) return;
       try {
         const res = await api.post("/api/migrate/policies", {
           policyIds: [id],
@@ -531,10 +521,24 @@ function wireBasket() {
     window.location.href = `/policy-compare.html?sourceId=${encodeURIComponent(id)}`;
   });
 
+  document.getElementById("basket-preview").addEventListener("click", async () => {
+    const ids = Array.from(state.selectedSource);
+    if (ids.length === 0) return;
+    try {
+      const res = await api.post("/api/migrate/policies", {
+        policyIds: ids,
+        dryRun: true,
+      });
+      reportClone(res.results ?? [], true);
+    } catch (err) {
+      toast(err.message || "Preview failed", "err");
+    }
+  });
+
   document.getElementById("basket-clone").addEventListener("click", async () => {
     const ids = Array.from(state.selectedSource);
     if (ids.length === 0) return;
-    if (!confirm(`Clone ${ids.length} polic${ids.length === 1 ? "y" : "ies"} from source to destination?\n\nClones go to the bottom of the destination's priority order, above the base policy, in their source order.`)) return;
+    if (!confirm(`Clone ${ids.length} polic${ids.length === 1 ? "y" : "ies"} from source to destination?\n\nClones go to the bottom of the destination's priority order, above the base policy, in their source order. Policies already on the destination are left as they are. Every policy's assignments are added where the destination has a match.`)) return;
     try {
       const res = await api.post("/api/migrate/policies", {
         policyIds: ids,
@@ -553,12 +557,16 @@ function wireBasket() {
 }
 
 /**
- * A short message and the results list for a clone: each policy tagged
- * created, already there or failed, with notes on settings changed to fit.
+ * A short message and the results list for a clone or its preview: each
+ * policy tagged created, already there or failed, with notes on settings
+ * changed to fit and a line per assignment.
  */
-function reportClone(results) {
+function reportClone(results, dryRun = false) {
   const n = countOutcomes(results);
-  toast(`Cloned ${n.created} / failed ${n.failed}${summarizeAssignments(results)}`, n.failed ? "err" : "ok");
+  const a = countAssignments(results);
+  const bad = n.failed > 0 || a.failed > 0;
+  if (dryRun) toast(`Preview: ${n["would-create"]} to clone / failed ${n.failed}${summarizeAssignments(results)}`, bad ? "err" : "ok");
+  else toast(`Cloned ${n.created} / failed ${n.failed}${summarizeAssignments(results)}`, bad ? "err" : "ok");
   const sourceById = new Map((Array.isArray(state.source) ? state.source : []).map((p) => [p.id, p]));
   const byProduct = new Map();
   for (const r of results) {
@@ -571,32 +579,47 @@ function reportClone(results) {
       notes: notesOf(r),
     });
   }
+  const unassigned = a.pending + a["not-matched"] + a.failed;
+  const csv = unassigned ? " Export assignments (CSV) lists every source assignment, for setting the rest by hand." : "";
+  // Assignment counts only when a policy has assignments.
+  const assigned = results.some((r) => r.assignments);
   resultsModal({
-    title: "Clone results",
-    summary: `${plural(n.created, "policy", "policies")} created on the destination. Each write is in data/audit.log.`,
+    title: dryRun ? "Preview: nothing was written" : "Clone results",
+    summary: dryRun
+      ? `${plural(n["would-create"], "policy", "policies")} would be created on the destination${assigned ? `, and ${plural(a["will-set"], "assignment")} added` : ""}.${csv}`
+      : `${plural(n.created, "policy", "policies")} created on the destination${assigned ? `, and ${plural(a.set, "assignment")} added` : ""}. Each write is in data/audit.log.${csv}`,
     groups: [...byProduct].sort(([a], [b]) => a.localeCompare(b)).map(([title, rows]) => ({ title, rows })),
   });
 }
 
 /**
- * Build a short " · assignments: N mapped, M skipped" suffix from migration
- * results. Returns "" when assignment migration wasn't requested (no policy
- * result carries an `assignments` report).
+ * A short " · assignments: 3 added, 1 pending" suffix for the message, then
+ * how many settings were changed to fit. "" when there is neither.
  */
 function summarizeAssignments(results) {
-  // Settings the migrator changed/dropped to fit the destination (full detail
-  // is in the API response and the audit log).
+  const a = countAssignments(results);
+  const parts = [
+    [a["will-set"], "to add"],
+    [a.set, "added"],
+    [a["already-set"], "already there"],
+    [a.pending, "pending"],
+    [a["not-matched"], "not matched"],
+    [a.failed, "failed"],
+  ].filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
+  // Settings the migrator changed or dropped to fit the destination (full detail
+  // is in the results list and the audit log).
   const adjusted = (results ?? []).flatMap((r) => r.adjustments ?? []);
-  if (adjusted.length === 0) return "";
-  return ` · ${adjusted.length} setting${adjusted.length === 1 ? "" : "s"} adjusted for destination`;
+  return (parts.length ? ` · assignments: ${parts.join(", ")}` : "")
+    + (adjusted.length ? ` · ${adjusted.length} setting${adjusted.length === 1 ? "" : "s"} adjusted for destination` : "");
 }
 
 /**
- * Export Peripheral Control + Application Control policy assignments (source
- * tenant) to a CSV download. Mirrors scripts/export-policy-assignments.mjs:
- * for each policy it expands `appliesTo` into one row per assigned user, user
- * group, endpoint or endpoint group (or a single "none" row when unassigned),
- * resolving IDs to names. Source policies are already loaded in state.source.
+ * Export every source policy's assignments to a CSV download, for setting by
+ * hand what a clone could not match. Same columns as
+ * scripts/export-policy-assignments.mjs: for each policy it expands
+ * `appliesTo` into one row per assigned user, user group, endpoint or endpoint
+ * group (or a single "none" row when unassigned), resolving IDs to names.
+ * Source policies are already loaded in state.source.
  */
 async function exportAssignments() {
   const btn = document.getElementById("export-assignments");
@@ -604,12 +627,9 @@ async function exportAssignments() {
   btn.disabled = true;
   btn.textContent = "Building CSV";
   try {
-    const sourcePolicies = Array.isArray(state.source) ? state.source : [];
-    const policies = sourcePolicies.filter((p) =>
-      ASSIGNMENT_POLICY_TYPES.includes(p.type),
-    );
+    const policies = Array.isArray(state.source) ? state.source : [];
     if (policies.length === 0) {
-      toast("No Peripheral Control or Application Control policies on the source tenant.", "info");
+      toast("No policies on the source tenant.", "info");
       return;
     }
 

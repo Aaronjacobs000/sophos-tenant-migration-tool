@@ -98,6 +98,7 @@ const OUTCOME = {
   created: `<span class="tag tag-ok">created</span>`,
   updated: `<span class="tag tag-ok">updated</span>`,
   "would-create": `<span class="tag tag-accent">would create</span>`,
+  "would-update": `<span class="tag tag-accent">would update</span>`,
   skipped: `<span class="tag tag-muted">already there</span>`,
   failed: `<span class="tag tag-bad">failed</span>`,
   added: `<span class="tag tag-ok">added</span>`,
@@ -115,9 +116,41 @@ export function outcomeOf(r) {
   return "created";
 }
 
-/** A result's notes for the results list: settings changed to fit, then anything else the copy noted. */
+/**
+ * A result's notes for the results list: settings changed to fit, anything
+ * else the copy noted, then a policy's assignments, one line each.
+ */
 export function notesOf(r) {
-  return [...(r.adjustments ?? []), ...(r.notes ?? [])];
+  return [...(r.adjustments ?? []), ...(r.notes ?? []), ...assignmentNotes(r)];
+}
+
+const ASSIGNEE = { user: "user", userGroup: "user group", endpoint: "device", endpointGroup: "device group" };
+
+/** One line per assignment in a policy result, saying what happened to it and why. */
+export function assignmentNotes(r) {
+  const a = r?.assignments;
+  if (!a) return [];
+  const lines = (a.rows ?? []).map((row) => {
+    const who = `${ASSIGNEE[row.kind] ?? row.kind} "${row.name}"`;
+    switch (row.status) {
+      case "will-set": return `would assign to ${who}`;
+      case "set": return `assigned to ${who}`;
+      case "already-set": return `already assigned to ${who}`;
+      case "pending": return `pending, ${who}: ${row.reason}`;
+      case "not-matched": return `not assigned to ${who}: ${row.reason}`;
+      default: return `assigning ${who} failed: ${row.reason}`;
+    }
+  });
+  return [...lines, ...(a.notes ?? [])];
+}
+
+/** How many assignments have each status across policy results. */
+export function countAssignments(results) {
+  const n = { "will-set": 0, set: 0, "already-set": 0, pending: 0, "not-matched": 0, failed: 0 };
+  for (const r of results ?? []) {
+    for (const row of r.assignments?.rows ?? []) n[row.status] = (n[row.status] ?? 0) + 1;
+  }
+  return n;
 }
 
 /** How many results have each outcome, counted the way the results list tags them. */

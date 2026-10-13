@@ -31,6 +31,7 @@ test("Help's Dry runs card names the Preview buttons the pages have, and the pag
   const page = (file) => readFile(new URL(`../frontend/${file}`, import.meta.url), "utf8");
   const button = (html, label) => new RegExp(`<button[^>]*>${label.replace(/[()]/g, "\\$&")}</button>`).test(html);
   for (const [file, label, named] of [
+    ["policies.html", "Preview", "Policies"],
     ["exclusions.html", "Preview", "Exclusions"],
     ["web-filtering.html", "Preview", "Web filtering"],
     ["migrate.html", "Preview (dry run)", "Start migration"],
@@ -39,8 +40,10 @@ test("Help's Dry runs card names the Preview buttons the pages have, and the pag
     assert.ok(button(await page(file), label), `${file} has ${label}`);
     assert.ok(card.includes(named), `Help names ${named}`);
   }
-  for (const file of ["policies.html", "groups.html"]) {
-    assert.doesNotMatch(await page(file), /Preview/, `${file} has no preview`);
-  }
-  assert.match(card, /The Policies and Groups pages have no preview/);
+  assert.doesNotMatch(await page("groups.html"), /Preview/, "groups.html has no preview");
+  assert.match(card, /The Groups page has no preview/);
+  // Compare draws its Preview button from its script.
+  const compare = await readFile(new URL("../frontend/js/page-policy-compare.js", import.meta.url), "utf8");
+  assert.match(compare, /<button id="preview-btn" class="btn">Preview<\/button>/);
+  assert.ok(card.includes("Compare"), "Help names Compare");
 });
