@@ -2,7 +2,9 @@
 // hostname, written in the shape Sophos accepts (measured live 13/10/2026) and read back by ID.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createFakeSophos, SRC, DST, page } from "./helpers/fake-sophos.mjs";
+import { assignmentNotes } from "../frontend/js/ui.js";
 import { bootApp, readAudit } from "./helpers/app.mjs";
 
 const fake = createFakeSophos();
@@ -83,6 +85,36 @@ test("devices match by hostname and type; none is pending, more than one is not 
   assert.equal(twice.status, "not-matched");
   assert.match(twice.reason, /^2 devices named "DC01" on the destination/);
   assert.equal(matchEndpoint({ id: "s4", hostname: "WEB", type: "computer" }, dest).status, "pending", "a server of that name is another device");
+});
+
+test("a destination record last seen as the device registered on the source is the one it left behind", () => {
+  // As read live on 13/10/2026: LAPTOP-7 moved from the destination to the source on 28/09; the destination keeps its old record.
+  const yoga = { id: "s-yoga", hostname: "LAPTOP-7", type: "computer", registeredAt: "2026-09-28T03:08:07.070Z", lastSeenAt: "2026-10-08T13:26:10.021Z" };
+  const oldYoga = { id: "d-yoga", hostname: "LAPTOP-7", type: "computer", registeredAt: "2022-06-28T00:54:41.047Z", lastSeenAt: "2026-09-25T04:47:03.363Z" };
+  const pending = matchEndpoint(yoga, [oldYoga]);
+  assert.equal(pending.status, "pending", "before 0.4.2 this matched the old record");
+  assert.match(pending.reason, /^the only device named "LAPTOP-7" on the destination was last seen 2026-09-25, when or before this device registered on the source \(2026-09-28\): that is the record left behind when it moved there/);
+  // Sophos marks the old record seen a few seconds after the move (2 s for LAPTOP-9).
+  const play = { id: "s-play", hostname: "LAPTOP-9", type: "computer", registeredAt: "2026-09-27T06:04:06.340Z" };
+  assert.equal(matchEndpoint(play, [{ id: "d-play", hostname: "LAPTOP-9", type: "computer", lastSeenAt: "2026-09-27T06:04:08.122Z" }]).status, "pending");
+  // A device that moved to the destination after living on the source is current there.
+  const moved = { id: "d-new", hostname: "LAPTOP-7", type: "computer", registeredAt: "2026-10-13T01:00:00.000Z", lastSeenAt: "2026-10-13T01:20:00.000Z" };
+  assert.deepEqual(matchEndpoint(yoga, [oldYoga, moved]), { destId: "d-new", note: "passed over an older record of that name left behind by an earlier move" });
+});
+
+test("of several current records the most recently seen is taken and the note says so; a tie is not matched", () => {
+  // As read live: DC01 left the source for the destination, which kept a record from before that and has the new one.
+  const dc01 = { id: "s-dc", hostname: "DC01", type: "server", registeredAt: "2026-04-12T05:48:24.300Z", lastSeenAt: "2026-04-12T06:02:34.850Z" };
+  const before = { id: "d-old", hostname: "DC01", type: "server", lastSeenAt: "2026-04-12T05:48:26.703Z" };
+  const now = { id: "d-now", hostname: "DC01", type: "server", lastSeenAt: "2026-04-12T23:40:31.652Z" };
+  assert.deepEqual(matchEndpoint(dc01, [before, now]), { destId: "d-now", note: "passed over an older record of that name left behind by an earlier move" });
+  const a = { id: "d-a", hostname: "PC-9", type: "computer", lastSeenAt: "2026-10-01T00:00:00.000Z" };
+  const b = { id: "d-b", hostname: "PC-9", type: "computer", lastSeenAt: "2026-10-12T00:00:00.000Z" };
+  assert.deepEqual(matchEndpoint({ id: "s", hostname: "PC-9", type: "computer" }, [a, b]),
+    { destId: "d-b", note: "2 devices with that name: took the one seen most recently (2026-10-12), not the one last seen 2026-10-01" });
+  const tie = matchEndpoint({ id: "s", hostname: "PC-9", type: "computer" }, [a, { ...b, lastSeenAt: a.lastSeenAt }]);
+  assert.equal(tie.status, "not-matched");
+  assert.match(tie.reason, /were last seen at the same time, so the tool can't tell which one it is$/);
 });
 
 // ---- through the clone, against a fake that answers as Sophos does ----
@@ -400,4 +432,28 @@ test("the user and group lists are read past the first page", async () => {
   const userPages = fake.calls.filter((c) => c.tenant === "dst" && c.path === "/common/v1/directory/users");
   assert.equal(userPages[0].query.pageTotal, "true");
   assert.equal(userPages.length, 2);
+});
+
+test("the results list gives each assignment a line, with how a device was picked", () => {
+  const lines = assignmentNotes({ assignments: { mode: "device", rows: [
+    { kind: "endpoint", name: "DC01", status: "set", destId: "d", note: "passed over an older record of that name left behind by an earlier move" },
+    { kind: "endpoint", name: "LAPTOP-7", status: "pending", reason: "not there yet" },
+    { kind: "endpointGroup", name: "Sydney", status: "will-set", destId: "g" },
+  ] } });
+  assert.deepEqual(lines, [
+    'assigned to device "DC01" (passed over an older record of that name left behind by an earlier move)',
+    'pending, device "LAPTOP-7": not there yet',
+    'would assign to device group "Sydney"',
+  ]);
+});
+
+test("Export assignments (CSV) reads the policies and every name from the source when it runs", async () => {
+  const js = await readFile(new URL("../frontend/js/page-policies.js", import.meta.url), "utf8");
+  const exp = js.slice(js.indexOf("async function exportAssignments"), js.indexOf("function csvCell"));
+  assert.match(exp, /const policies = \(await api\.get\("\/api\/source\/policies"\)\)\.items \?\? \[\];/);
+  assert.doesNotMatch(exp, /getCachedSection|loadResolverItems|state\.source/, "nothing from the page's cached copy");
+  for (const path of ["/api/source/groups", "/api/source/user-groups", "/api/source/users"]) assert.ok(exp.includes(`fetchResolverItems("${path}")`), path);
+  // Devices page by key, 500 at a time, until there is no next key.
+  assert.match(exp, /\/api\/source\/endpoints\?pageSize=500\$\{key \? `&pageFromKey=\$\{encodeURIComponent\(key\)\}` : ""\}/);
+  assert.match(exp, /key = res\.pages\?\.nextKey \|\| "";\s*\} while \(key\);/);
 });

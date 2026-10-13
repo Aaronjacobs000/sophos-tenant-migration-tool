@@ -66,6 +66,8 @@ export interface AssignmentRow {
   destId?: string;
   status: AssignmentStatus;
   reason?: string;
+  /** How a match was chosen when it was not the only candidate, such as the most recently seen of two devices. */
+  note?: string;
 }
 
 export interface AssignmentReport {
@@ -125,7 +127,7 @@ export function appliesToBody(mode: AssignmentMode, ids: Partial<Record<AppliesT
 
 // --- Matching ---
 
-export type Match = { destId: string } | { status: "pending" | "not-matched"; reason: string };
+export type Match = { destId: string; note?: string } | { status: "pending" | "not-matched"; reason: string };
 
 const norm = (s: string | undefined | null) => String(s ?? "").trim().toLowerCase();
 
@@ -177,21 +179,57 @@ export function matchEndpointGroup(group: SophosEndpointGroup, dest: SophosEndpo
   );
 }
 
+/** Device records carry when they registered, which the shared type leaves out. */
+type DeviceRecord = SophosEndpoint & { registeredAt?: string };
+
+/**
+ * When a device moves, the tenant it leaves keeps its old record, which
+ * Sophos marks seen a few seconds after the device registers on the other
+ * tenant (2 to 10 s, measured on live tenants on 13/10/2026). A
+ * destination record last seen no later than this after the source device
+ * registered is that old record.
+ */
+export const OLD_RECORD_MARGIN_MS = 5 * 60_000;
+
+const seenAt = (e: DeviceRecord) => Date.parse(e.lastSeenAt ?? "");
+const day = (iso: string | undefined) => (iso ?? "").slice(0, 10) || "never";
+
 /**
  * A device by hostname, among the destination's devices of the same type.
- * None there is pending: the device has not moved yet. More than one is not
- * matched, because the destination can keep an old record of a device that
- * moved away and back.
+ *   - A destination record last seen before (or just after) the source device
+ *     registered is the record left behind when the device moved to the
+ *     source, so it is not the device now. With only such records the device
+ *     is pending, as when there are none: its move has not landed.
+ *   - Of several current records, the most recently seen is taken, and the
+ *     note says so. Two seen at the same time are not matched.
  */
-export function matchEndpoint(endpoint: SophosEndpoint, dest: SophosEndpoint[]): Match {
+export function matchEndpoint(endpoint: DeviceRecord, dest: DeviceRecord[]): Match {
   const host = norm(endpoint.hostname);
   if (!host) return { status: "not-matched", reason: "the device has no hostname on the source to match by" };
   const sameType = (e: SophosEndpoint) => !endpoint.type || !e.type || e.type === endpoint.type;
-  return single(
-    dest.filter((e) => norm(e.hostname) === host && sameType(e)),
-    { status: "pending", reason: `no device named "${endpoint.hostname}" on the destination yet: once its move lands, clone again to add it` },
-    (n) => `${n} devices named "${endpoint.hostname}" on the destination, so the tool can't tell which one it is`,
-  );
+  const named = dest.filter((e) => norm(e.hostname) === host && sameType(e));
+  if (!named.length) {
+    return { status: "pending", reason: `no device named "${endpoint.hostname}" on the destination yet: once its move lands, clone again to add it` };
+  }
+  const registered = Date.parse(endpoint.registeredAt ?? "");
+  const old = (e: DeviceRecord) => Number.isFinite(registered) && seenAt(e) <= registered + OLD_RECORD_MARGIN_MS;
+  const current = named.filter((e) => !old(e));
+  const leftOut = named.length - current.length;
+  if (!current.length) {
+    const what = named.length === 1 ? `the only device named "${endpoint.hostname}" on the destination was` : `the ${named.length} devices named "${endpoint.hostname}" on the destination were`;
+    return {
+      status: "pending",
+      reason: `${what} last seen ${day(named.map((e) => e.lastSeenAt).sort().at(-1))}, when or before this device registered on the source (${day(endpoint.registeredAt)}): that is the record left behind when it moved there. Once its move to the destination lands, clone again to add it`,
+    };
+  }
+  const passedOver = `passed over ${leftOut === 1 ? "an older record" : `${leftOut} older records`} of that name left behind by an earlier move`;
+  if (current.length === 1) return { destId: current[0]!.id, ...(leftOut ? { note: passedOver } : {}) };
+  const byRecent = [...current].sort((a, b) => (seenAt(b) || 0) - (seenAt(a) || 0));
+  const [first, second] = byRecent as [DeviceRecord, DeviceRecord];
+  if (!Number.isFinite(seenAt(first)) || seenAt(first) === seenAt(second)) {
+    return { status: "not-matched", reason: `${current.length} devices named "${endpoint.hostname}" on the destination were last seen at the same time, so the tool can't tell which one it is` };
+  }
+  return { destId: first.id, note: `${current.length} devices with that name: took the one seen most recently (${day(first.lastSeenAt)}), not the one last seen ${day(second.lastSeenAt)}${leftOut ? `; ${passedOver}` : ""}` };
 }
 
 /** How the source knows a target, for the results list. */
@@ -307,7 +345,7 @@ export async function planAssignments(
         kind,
         sourceId: id,
         name: labelOf(kind, obj),
-        ...("destId" in m ? { destId: m.destId, status: "will-set" as const } : { status: m.status, reason: m.reason }),
+        ...("destId" in m ? { destId: m.destId, status: "will-set" as const, ...(m.note ? { note: m.note } : {}) } : { status: m.status, reason: m.reason }),
       });
     }
   }

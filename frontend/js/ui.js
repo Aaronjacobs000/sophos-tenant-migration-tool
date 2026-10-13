@@ -132,10 +132,12 @@ export function assignmentNotes(r) {
   if (!a) return [];
   const lines = (a.rows ?? []).map((row) => {
     const who = `${ASSIGNEE[row.kind] ?? row.kind} "${row.name}"`;
+    // How a match was picked from several, such as the most recently seen device.
+    const how = row.note ? ` (${row.note})` : "";
     switch (row.status) {
-      case "will-set": return `would assign to ${who}`;
-      case "set": return `assigned to ${who}`;
-      case "already-set": return `already assigned to ${who}`;
+      case "will-set": return `would assign to ${who}${how}`;
+      case "set": return `assigned to ${who}${how}`;
+      case "already-set": return `already assigned to ${who}${how}`;
       case "pending": return `pending, ${who}: ${row.reason}`;
       case "not-matched": return `not assigned to ${who}: ${row.reason}`;
       default: return `assigning ${who} failed: ${row.reason}`;

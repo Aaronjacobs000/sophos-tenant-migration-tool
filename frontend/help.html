@@ -109,7 +109,8 @@
       <section class="panel-card">
         <h2>Policies</h2>
         <p>A clone adds each policy's assignments on the destination: device groups and user groups matched by name,
-          users by email and then name, and devices by hostname. Mirror the groups first. A device that has not moved
+          users by email and then name, and devices by hostname, passing over an old record a device left behind
+          when it moved to the source and taking the most recently seen of several. Mirror the groups first. A device that has not moved
           yet is pending: once its move lands, clone the policy again. A policy already on the destination is left as
           it is, and only its assignments are added. Anything not matched is listed with the reason, and
           <strong>Export assignments (CSV)</strong> lists every source assignment for setting by hand.</p>

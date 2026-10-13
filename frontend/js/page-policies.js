@@ -619,7 +619,8 @@ function summarizeAssignments(results) {
  * scripts/export-policy-assignments.mjs: for each policy it expands
  * `appliesTo` into one row per assigned user, user group, endpoint or endpoint
  * group (or a single "none" row when unassigned), resolving IDs to names.
- * Source policies are already loaded in state.source.
+ * The policies and the names are read from the source at export time, not
+ * from the page's cached copy, so groups and devices made since show by name.
  */
 async function exportAssignments() {
   const btn = document.getElementById("export-assignments");
@@ -627,7 +628,7 @@ async function exportAssignments() {
   btn.disabled = true;
   btn.textContent = "Building CSV";
   try {
-    const policies = Array.isArray(state.source) ? state.source : [];
+    const policies = (await api.get("/api/source/policies")).items ?? [];
     if (policies.length === 0) {
       toast("No policies on the source tenant.", "info");
       return;
@@ -671,15 +672,14 @@ async function exportAssignments() {
 }
 
 /**
- * Build an id -> name resolver for assignment targets on the source tenant.
- * Reuses the preload cache for endpoints and endpoint groups; user groups and
- * directory users are fetched on demand (not preloaded). Any source that fails
- * to load is skipped; unresolved IDs fall back to the raw ID.
+ * Build an id -> name resolver for assignment targets on the source tenant,
+ * read now rather than from the preload cache. Any list that fails to load is
+ * skipped; unresolved IDs fall back to the raw ID.
  */
 async function buildAssignmentNameResolver() {
   const [endpoints, endpointGroups, userGroups, users] = await Promise.all([
-    loadResolverItems("endpoints", "/api/source/endpoints"),
-    loadResolverItems("groups", "/api/source/groups"),
+    fetchAllEndpoints(),
+    fetchResolverItems("/api/source/groups"),
     fetchResolverItems("/api/source/user-groups"),
     fetchResolverItems("/api/source/users"),
   ]);
@@ -693,15 +693,20 @@ async function buildAssignmentNameResolver() {
   return (id) => nameMap.get(id) ?? id;
 }
 
-// Prefer preloaded data for a section; fall back to a direct API fetch.
-async function loadResolverItems(section, fallbackPath) {
+// Every source device: the endpoint list is paged by a key, 500 at a time.
+async function fetchAllEndpoints() {
+  const items = [];
   try {
-    const cached = await getCachedSection("source", section);
-    if (cached.status?.state === "ok") return cached.items || [];
+    let key = "";
+    do {
+      const res = await api.get(`/api/source/endpoints?pageSize=500${key ? `&pageFromKey=${encodeURIComponent(key)}` : ""}`);
+      items.push(...(res.items || []));
+      key = res.pages?.nextKey || "";
+    } while (key);
   } catch {
-    // Fall through to the direct fetch below.
+    // Unresolved device IDs fall back to the raw ID.
   }
-  return fetchResolverItems(fallbackPath);
+  return items;
 }
 
 async function fetchResolverItems(path) {
