@@ -8,7 +8,7 @@ import { startHttp } from "./helpers/http.mjs";
 
 const fake = createFakeSophos();
 const { root } = await bootApp(fake);
-const { mirrorGroups, mirrorUserGroups } = await import("../backend/dist/services/group-mirror.js");
+const { mirrorGroups, mirrorUserGroups, endpointGroupDescription } = await import("../backend/dist/services/group-mirror.js");
 const { migrateConfigRouter } = await import("../backend/dist/routes/migrate-config.js");
 const http = await startHttp([migrateConfigRouter]);
 after(() => http.close());
@@ -18,6 +18,8 @@ const srcGroups = [
   { id: "sg-1", name: "Parent group", type: "computer", description: "" },
   { id: "sg-2", name: "Finance", type: "computer", description: "Finance laptops" },
   { id: "sg-3", name: "SQL", type: "server" },
+  { id: "sg-6", name: "Sydney, level 3", type: "computer", description: "" },
+  { id: "sg-5", name: "Sydney", type: "computer", description: 'Level 3, "east" wing; desks #1 to #40' },
 ];
 fake.on(SRC, "GET", "/endpoint/v1/endpoint-groups", (req) => page(srcGroups, req.query));
 fake.on(SRC, "GET", /^\/endpoint\/v1\/endpoint-groups\/[^/]+$/, (req) => {
@@ -25,9 +27,10 @@ fake.on(SRC, "GET", /^\/endpoint\/v1\/endpoint-groups\/[^/]+$/, (req) => {
   return g ? { body: g } : { status: 404, body: { error: "NotFound" } };
 });
 fake.on(DST, "GET", "/endpoint/v1/endpoint-groups", (req) => page([], req.query));
-// Measured on a live tenant 25/09/2026: description "" is a 400.
+// Measured on a live tenant 25/09/2026: description "" is a 400. And on 13/10/2026: a comma, semicolon,
+// # or double quote in the description is a 400 too.
 fake.on(DST, "POST", "/endpoint/v1/endpoint-groups", (req) =>
-  req.body.description === ""
+  req.body.description === "" || /[,;#"]/.test(req.body.description ?? "")
     ? { status: 400, body: { error: "badRequest", message: '400 BAD_REQUEST "Validation failure"' } }
     : { status: 201, body: { id: fake.nextId("dg"), ...req.body } });
 
@@ -106,4 +109,30 @@ test("POST /api/migrate/user-groups needs IDs and returns one result per group",
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.results.map((r) => [r.sourceId, r.action]), [["su-1", "skip-exists"]]);
   assert.deepEqual(fake.writes(), []);
+});
+
+test("a description with characters Sophos refuses is sent without them, and the result says so", async () => {
+  assert.deepEqual(endpointGroupDescription("Finance laptops"), { description: "Finance laptops" });
+  assert.deepEqual(endpointGroupDescription(undefined), { description: "" });
+  const tidy = endpointGroupDescription('Level 3, "east" wing; desks #1 to #40');
+  assert.equal(tidy.description, "Level 3 east wing desks 1 to 40");
+  assert.match(tidy.changed, /^description changed: Sophos refuses commas, semicolons, #, double quotes in endpoint group descriptions through its API/);
+
+  fake.reset();
+  const [r] = await mirrorGroups({ groupIds: ["sg-5"] });
+  assert.equal(r.ok, true, r.error);
+  const [post] = fake.writes();
+  assert.equal(post.body.description, "Level 3 east wing desks 1 to 40");
+  assert.equal(post.body.name, "Sydney", "the name is the match key and is sent as it is");
+  assert.match(r.notes[0], /^description changed:/);
+});
+
+test("a group whose name Sophos would refuse is not sent, and the result says to rename it on the source", async () => {
+  for (const dryRun of [true, false]) {
+    fake.reset();
+    const [r] = await mirrorGroups({ groupIds: ["sg-6"], dryRun });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /^not sent: Sophos refuses commas in endpoint group names through its API, and the tool matches groups by name, so it does not change it: rename the group on the source/);
+    assert.deepEqual(fake.writes(), []);
+  }
 });

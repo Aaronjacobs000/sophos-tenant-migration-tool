@@ -68,6 +68,18 @@ export async function mirrorGroups(req: MirrorGroupsRequest): Promise<MirrorGrou
       results.push({ sourceId, sourceName: sourceGroup.name, ok: false, action: "create", error: earlierUnclear() });
       continue;
     }
+    // The name is how groups are matched, so it is never changed; one Sophos would refuse is not sent.
+    const refusedInName = REFUSED_GROUP_CHARS.filter((c) => sourceGroup.name.includes(c));
+    if (refusedInName.length) {
+      results.push({
+        sourceId,
+        sourceName: sourceGroup.name,
+        ok: false,
+        action: req.dryRun ? "dry-run-create" : "create",
+        error: `not sent: Sophos refuses ${charNames(refusedInName)} in endpoint group names through its API, and the tool matches groups by name, so it does not change it: rename the group on the source, then mirror it again`,
+      });
+      continue;
+    }
 
     if (req.dryRun) {
       destNames.add(sourceGroup.name.toLowerCase());
@@ -83,12 +95,14 @@ export async function mirrorGroups(req: MirrorGroupsRequest): Promise<MirrorGrou
     try {
       // The create API rejects an empty description with 400 "Validation
       // failure" (measured 25/09/2026), and GET returns "" for groups made
-      // without one, so only send a description that has text.
+      // without one, so only send a description that has text. It refuses
+      // some characters too (endpointGroupDescription), which are taken out.
       const name = sourceGroup.name.toLowerCase();
+      const { description, changed } = endpointGroupDescription(sourceGroup.description);
       const { value: created, note } = await createChecked(
         () => createGroup(dst.client, dst.tenantId, {
           name: sourceGroup.name,
-          ...(sourceGroup.description?.trim() ? { description: sourceGroup.description } : {}),
+          ...(description ? { description } : {}),
           type: sourceGroup.type,
           endpointType: sourceGroup.endpointType,
         }),
@@ -107,13 +121,14 @@ export async function mirrorGroups(req: MirrorGroupsRequest): Promise<MirrorGrou
         ok: true,
         detail: { sourceId, name: sourceGroup.name, ...(note ? { note } : {}) },
       });
+      const notes = [...(changed ? [changed] : []), ...(note ? [note] : [])];
       results.push({
         sourceId,
         sourceName: sourceGroup.name,
         destId: created.id,
         ok: true,
         action: "create",
-        ...(note ? { notes: [note] } : {}),
+        ...(notes.length ? { notes } : {}),
       });
     } catch (err) {
       const msg = errMsg(err);
@@ -218,6 +233,35 @@ export async function mirrorUserGroups(req: MirrorUserGroupsRequest): Promise<Mi
   }
 
   return results;
+}
+
+/**
+ * Characters Sophos refuses in an endpoint group's name and description
+ * through its API, with 400 "Validation failure": measured on a live tenant
+ * on 13/10/2026, one create per character. User groups take them all.
+ */
+export const REFUSED_GROUP_CHARS = [",", ";", "#", '"'];
+
+/** "commas, semicolons, #, double quotes", for the ones found. */
+function charNames(found: string[]): string {
+  const names: Record<string, string> = { ",": "commas", ";": "semicolons", "#": "#", '"': "double quotes" };
+  return found.map((c) => names[c] ?? c).join(", ");
+}
+
+/**
+ * The description to send for an endpoint group: each refused character
+ * becomes a space, and spaces are tidied. `changed` is the note for the
+ * results list when anything was taken out.
+ */
+export function endpointGroupDescription(raw: string | undefined): { description: string; changed?: string } {
+  const text = (raw ?? "").trim();
+  const found = REFUSED_GROUP_CHARS.filter((c) => text.includes(c));
+  if (!found.length) return { description: text };
+  const description = text.replace(/[,;#"]/g, " ").replace(/\s+/g, " ").trim();
+  return {
+    description,
+    changed: `description changed: Sophos refuses ${charNames(found)} in endpoint group descriptions through its API, so they were replaced with spaces`,
+  };
 }
 
 function errMsg(err: unknown): string {
