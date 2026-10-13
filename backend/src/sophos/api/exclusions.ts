@@ -18,27 +18,9 @@ const SCANNING_PATH = "/endpoint/v1/settings/exclusions/scanning";
 const ALLOWED_PATH = "/endpoint/v1/settings/allowed-items";
 const BLOCKED_PATH = "/endpoint/v1/settings/blocked-items";
 
-async function listAll<T>(
-  client: SophosClient,
-  tenantId: string,
-  path: string,
-): Promise<T[]> {
-  const items: T[] = [];
-  let page = 1;
-  while (true) {
-    const res = await client.tenantRequest<{
-      items: T[];
-      pages?: { total?: number };
-    }>(tenantId, path, {
-      params: { page: String(page), pageSize: "100" },
-    });
-    items.push(...res.items);
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
-  return items;
-}
+/** Every item, reading all pages: without pageTotal these lists give no page count, so it asks for one. */
+const listAll = <T>(client: SophosClient, tenantId: string, path: string): Promise<T[]> =>
+  listAllPages<T>(client, tenantId, path);
 
 export const listScanningExclusions = (c: SophosClient, t: string) =>
   listAll<SophosScanningExclusion>(c, t, SCANNING_PATH);

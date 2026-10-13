@@ -51,19 +51,19 @@ export async function listGroupMembers(
   tenantId: string,
   id: string,
 ): Promise<SophosEndpoint[]> {
+  // Cursor paging: this list ignores page numbers and hands back pages.nextKey
+  // (measured 13/10/2026: page=5 answered with the first page).
   const items: SophosEndpoint[] = [];
-  let page = 1;
-  while (true) {
+  let pageFromKey: string | undefined;
+  do {
     const res = await client.tenantRequest<SophosEndpointPage>(
       tenantId,
-      `${GROUPS_PATH}/${id}/endpoints`,
-      { params: { page: String(page), pageSize: "100" } },
+      `${GROUPS_PATH}/${encodeURIComponent(id)}/endpoints`,
+      { params: { pageSize: "500", ...(pageFromKey ? { pageFromKey } : {}) } },
     );
-    items.push(...res.items);
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
+    items.push(...(res.items ?? []));
+    pageFromKey = res.pages?.nextKey;
+  } while (pageFromKey);
   return items;
 }
 

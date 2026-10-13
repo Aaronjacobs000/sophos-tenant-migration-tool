@@ -20,30 +20,17 @@ import type { SophosClient } from "../client/sophos-client.js";
 import { listAllPages } from "./paging.js";
 import type {
   SophosMigrationJob,
-  SophosMigrationJobPage,
   SophosMigrationEndpointPage,
 } from "../types/migration.js";
 
 const MIGRATIONS_PATH = "/endpoint/v1/migrations";
 
+/** Every job, reading all pages: without pageTotal the API gives no page count, so it asks for one. */
 export async function listMigrationJobs(
   client: SophosClient,
   tenantId: string,
 ): Promise<SophosMigrationJob[]> {
-  const items: SophosMigrationJob[] = [];
-  let page = 1;
-  while (true) {
-    const res = await client.tenantRequest<SophosMigrationJobPage>(
-      tenantId,
-      MIGRATIONS_PATH,
-      { params: { page: String(page), pageSize: "100" } },
-    );
-    items.push(...res.items);
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
-  return items;
+  return listAllPages<SophosMigrationJob>(client, tenantId, MIGRATIONS_PATH);
 }
 
 export async function getMigrationJob(
@@ -116,25 +103,13 @@ export async function deleteMigrationJob(
   });
 }
 
+/** Every device in a job, reading all pages: without pageTotal the API gives no page count, so it asks for one. */
 export async function listMigrationJobEndpoints(
   client: SophosClient,
   tenantId: string,
   jobId: string,
 ): Promise<SophosMigrationEndpointPage["items"]> {
-  const items: SophosMigrationEndpointPage["items"] = [];
-  let page = 1;
-  while (true) {
-    const res = await client.tenantRequest<SophosMigrationEndpointPage>(
-      tenantId,
-      `${MIGRATIONS_PATH}/${jobId}/endpoints`,
-      { params: { page: String(page), pageSize: "100" } },
-    );
-    items.push(...res.items);
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
-  return items;
+  return listAllPages<SophosMigrationEndpointPage["items"][number]>(client, tenantId, `${MIGRATIONS_PATH}/${jobId}/endpoints`);
 }
 
 /** One device in a migration job, with the ID it has on the receiving tenant once moved. */

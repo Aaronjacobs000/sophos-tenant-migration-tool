@@ -6,6 +6,7 @@
  */
 
 import type { SophosClient } from "../client/sophos-client.js";
+import { listAllPages } from "./paging.js";
 
 const LOCAL_SITES_PATH = "/endpoint/v1/settings/web-control/local-sites";
 
@@ -17,25 +18,12 @@ export interface SophosLocalSite {
   comment?: string;
 }
 
+/** Every entry, reading all pages: without pageTotal the API gives no page count, so it asks for one. */
 export async function listLocalSites(
   client: SophosClient,
   tenantId: string,
 ): Promise<SophosLocalSite[]> {
-  const items: SophosLocalSite[] = [];
-  let page = 1;
-  while (true) {
-    const res = await client.tenantRequest<{
-      items: SophosLocalSite[];
-      pages?: { total?: number };
-    }>(tenantId, LOCAL_SITES_PATH, {
-      params: { page: String(page), pageSize: "100" },
-    });
-    items.push(...(res.items ?? []));
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
-  return items;
+  return listAllPages<SophosLocalSite>(client, tenantId, LOCAL_SITES_PATH);
 }
 
 export async function createLocalSite(
