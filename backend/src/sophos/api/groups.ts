@@ -5,31 +5,16 @@
 import type { SophosClient } from "../client/sophos-client.js";
 import { listAllPages } from "./paging.js";
 import type { SophosEndpoint, SophosEndpointPage } from "../types/sophos.js";
-import type {
-  SophosEndpointGroup,
-  SophosEndpointGroupPage,
-} from "../types/migration.js";
+import type { SophosEndpointGroup } from "../types/migration.js";
 
 const GROUPS_PATH = "/endpoint/v1/endpoint-groups";
 
+/** Every endpoint group, reading all pages: without pageTotal the API gives no page count, so it asks for one. */
 export async function listGroups(
   client: SophosClient,
   tenantId: string,
 ): Promise<SophosEndpointGroup[]> {
-  const items: SophosEndpointGroup[] = [];
-  let page = 1;
-  while (true) {
-    const res = await client.tenantRequest<SophosEndpointGroupPage>(
-      tenantId,
-      GROUPS_PATH,
-      { params: { page: String(page), pageSize: "100" } },
-    );
-    items.push(...res.items);
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
-  return items;
+  return listAllPages<SophosEndpointGroup>(client, tenantId, GROUPS_PATH);
 }
 
 export async function getGroup(

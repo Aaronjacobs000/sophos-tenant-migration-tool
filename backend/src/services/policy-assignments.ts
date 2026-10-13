@@ -32,8 +32,8 @@
  */
 
 import { getPolicy, updatePolicy } from "../sophos/api/policies.js";
-import { listAllUsers, type SophosUser } from "../sophos/api/users.js";
-import { listAllUserGroups, type SophosUserGroup } from "../sophos/api/user-groups.js";
+import { listUsers, type SophosUser } from "../sophos/api/users.js";
+import { listUserGroups, type SophosUserGroup } from "../sophos/api/user-groups.js";
 import { listAllGroups } from "../sophos/api/groups.js";
 import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { auditOrWarn } from "./audit-log.js";
@@ -227,8 +227,8 @@ export function tenantDirectory(ctx: TenantContext): Directory {
   const allEndpoints = once(() => listAllEndpoints(ctx.client, ctx.tenantId, { pageSize: ENDPOINT_PAGE }));
   const byId = new Map<string, SophosEndpoint | null>();
   return {
-    users: once(() => listAllUsers(ctx.client, ctx.tenantId)),
-    userGroups: once(() => listAllUserGroups(ctx.client, ctx.tenantId)),
+    users: once(() => listUsers(ctx.client, ctx.tenantId)),
+    userGroups: once(() => listUserGroups(ctx.client, ctx.tenantId)),
     endpointGroups: once(() => listAllGroups(ctx.client, ctx.tenantId)),
     async endpoints(ids?: string[]) {
       if (!ids) return allEndpoints();

@@ -4,39 +4,27 @@
  */
 
 import type { SophosClient } from "../client/sophos-client.js";
-import type {
-  SophosPolicy,
-  SophosPolicyPage,
-} from "../types/migration.js";
+import { listAllPages } from "./paging.js";
+import type { SophosPolicy } from "../types/migration.js";
 
 const POLICIES_PATH = "/endpoint/v1/policies";
 
+/**
+ * Every policy, reading all pages so the UI can render a consolidated source
+ * vs dest list. Without pageTotal the API gives no page count, so it asks for one.
+ */
 export async function listPolicies(
   client: SophosClient,
   tenantId: string,
   opts: { policyType?: string; pageSize?: number } = {},
 ): Promise<SophosPolicy[]> {
-  // Walk all pages so the UI can render a consolidated source vs dest list.
-  const items: SophosPolicy[] = [];
-  let page = 1;
-  while (true) {
-    const params: Record<string, string> = {
-      page: String(page),
-      pageSize: String(opts.pageSize ?? 100),
-    };
-    if (opts.policyType) params.policyType = opts.policyType;
-
-    const res = await client.tenantRequest<SophosPolicyPage>(
-      tenantId,
-      POLICIES_PATH,
-      { params },
-    );
-    items.push(...res.items);
-    const total = res.pages?.total;
-    if (!total || page >= total) break;
-    page++;
-  }
-  return items;
+  return listAllPages<SophosPolicy>(
+    client,
+    tenantId,
+    POLICIES_PATH,
+    opts.policyType ? { policyType: opts.policyType } : {},
+    opts.pageSize ?? 100,
+  );
 }
 
 export async function getPolicy(
