@@ -98,7 +98,8 @@ The Migrations page, a job's monitor, and the same monitor in wall view:
 
 ## Prerequisites
 
-- Node.js 20 or newer.
+- Node.js 22 or newer.
+  - Use a patched release: 22.23.4, 24.22.1, 26.12.1 or later.
 - Sophos Fusion (formerly Sophos Central) API credentials, either:
   - a Client ID and Client Secret created in each tenant under *Global Settings > API Credentials* (Super Admin role recommended), or
   - one partner or organization credential that manages both tenants.

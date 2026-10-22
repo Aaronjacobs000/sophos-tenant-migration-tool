@@ -14,7 +14,7 @@
     "url": "https://github.com/Aaronjacobs000/sophos-tenant-migration-tool/issues"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc",
