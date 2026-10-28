@@ -132,15 +132,24 @@ export async function startMigration(
       `${invalidIds.length} endpoint ID(s) are not valid UUIDs: ${invalidIds.slice(0, 3).join(", ")}${invalidIds.length > 3 ? "…" : ""}`,
     );
   }
+  // A device listed more than once is read, counted and sent once. UUIDs
+  // ignore case, so IDs that differ only in case are the same device.
+  const seen = new Set<string>();
+  const uniqueIds = cleanIds.filter((id) => {
+    const key = id.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   // Replace req.endpointIds with the cleaned version
-  req.endpointIds = cleanIds;
+  req.endpointIds = uniqueIds;
 
   // Sophos takes at most 1000 devices in one job (API reference), so a larger
   // selection is refused before any call, not after reading every device.
-  if (cleanIds.length > MAX_ENDPOINTS_PER_JOB) {
+  if (uniqueIds.length > MAX_ENDPOINTS_PER_JOB) {
     return {
       preflightFailures: [],
-      deviceLimitFailure: `${cleanIds.length} devices are selected, and Sophos accepts at most ${MAX_ENDPOINTS_PER_JOB} in one migration job through its API, so nothing was sent. Start a move for each batch of ${MAX_ENDPOINTS_PER_JOB} or fewer.`,
+      deviceLimitFailure: `${uniqueIds.length} devices are selected, and Sophos accepts at most ${MAX_ENDPOINTS_PER_JOB} in one migration job through its API, so nothing was sent. Start a move for each batch of ${MAX_ENDPOINTS_PER_JOB} or fewer.`,
     };
   }
 
@@ -241,7 +250,8 @@ export async function startMigration(
   });
   const handshakeToken = (receiver as any).token ?? receiver.fromToken;
   if (!handshakeToken) {
-    throw new Error("Receiver job did not return a handshake token");
+    // No trigger can be sent, and the job cannot be deleted, so it stays.
+    throw receivingJobLeft(new Error("Receiver job did not return a handshake token"), receiver, tenantOf(to).name);
   }
   registerSecret(handshakeToken);
   await auditOrWarn({
@@ -292,7 +302,7 @@ export async function startMigration(
         const miss = notFound(err, {
           where: `migration job ${receiver.id} on the sending tenant${sendingName ? ` ${sendingName}` : ""}`,
           found: seen,
-          advice: `Nothing was saved in this tool. The receiving job on ${receivingName ?? "the receiving tenant"} was left in place in case the move started, and expires by itself after 14 days. In a few minutes, open the Migrations page, which lists the jobs on both tenants: if job ${receiver.id.slice(0, 8)} shows as sending, the move started; if not, start the move again.`,
+          advice: `Nothing was saved in this tool. The receiving job on ${receivingName ?? "the receiving tenant"} was left in place in case the move started, and expires by itself ${expiryOf(receiver)}. In a few minutes, open the Migrations page, which lists the jobs on both tenants: if job ${receiver.id.slice(0, 8)} shows as sending, the move started; if not, start the move again.`,
           check: "the Migrations page",
         }, found.unread);
         throw new Error(found.unread ? `${miss.message} ${JOBS_PAGE_NOTE}` : miss.message, { cause: err });
@@ -380,17 +390,22 @@ export async function startMigration(
 }
 
 /**
- * A trigger that failed clearly, with what became of the receiving job. Keeps
- * the status Sophos answered with, so the route passes it on as before.
+ * A trigger that failed clearly, or a receiving job with no handshake token,
+ * with what became of the receiving job. Keeps the status Sophos answered
+ * with, so the route passes it on as before.
  */
 function receivingJobLeft(err: unknown, receiver: SophosMigrationJob, receivingName: string | null | undefined): Error {
+  const reason = (err instanceof Error ? err.message : String(err)).replace(/\.$/, "");
+  const message = `${reason}. The move did not start. The receiving job${receiver.id ? ` ${receiver.id}` : ""} on ${receivingName ?? "the receiving tenant"} stays in place until it expires ${expiryOf(receiver)}, because the Sophos API cannot delete a migration job.`;
+  return err instanceof SophosHttpError ? new SophosHttpError(message, err.status) : new Error(message, { cause: err });
+}
+
+/** When a receiving job expires: its expiresAt, or 14 days after it was created when Sophos gives none. */
+function expiryOf(receiver: SophosMigrationJob): string {
   const expiresAt = Date.parse(receiver.expiresAt ?? "");
-  const when = Number.isFinite(expiresAt)
+  return Number.isFinite(expiresAt)
     ? `on ${formatDate(new Date(expiresAt))}`
     : `${JOB_LIFETIME_MS / 86_400_000} days after it was created`;
-  const reason = (err instanceof Error ? err.message : String(err)).replace(/\.$/, "");
-  const message = `${reason}. The move did not start. The receiving job ${receiver.id} on ${receivingName ?? "the receiving tenant"} stays in place until it expires ${when}, because the Sophos API cannot delete a migration job.`;
-  return err instanceof SophosHttpError ? new SophosHttpError(message, err.status) : new Error(message, { cause: err });
 }
 
 const inFlight = new Map<string, Promise<LocalMigrationJob | null>>();
