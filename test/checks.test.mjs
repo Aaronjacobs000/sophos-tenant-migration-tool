@@ -114,6 +114,34 @@ test("licence check: calls the global host with the tenant scope header, GET onl
   assert.equal(fake.writes().length, 0);
 });
 
+test("licence check: a device listed more than once is read and counted once, so the seat check is not overstated", async () => {
+  const PC = "00000000-0000-4000-8000-0000000000aa";
+  const SRV = "00000000-0000-4000-8000-0000000000bb";
+  fake.reset();
+  fake.onGlobal("GET", "/licenses/v1/licenses", (req) => ({
+    body: { licenses: req.headers["x-tenant-id"] === DST.tenantId ? [lic("Sophos XDR - User", { quantity: 1 }), lic("Sophos XDR - Server", { quantity: 1 })] : [] },
+  }));
+  fake.on(SRC, "GET", /^\/endpoint\/v1\/endpoints\/.+$/, (req) => {
+    const id = req.path.split("/").pop();
+    return { body: { id, type: id.toLowerCase() === SRV ? "server" : "computer", hostname: "h" } };
+  });
+  const { startHttp } = await import("./helpers/http.mjs");
+  const { checksRouter } = await import("../backend/dist/routes/checks.js");
+  const http = await startHttp([checksRouter]);
+  try {
+    const res = await http.post("/api/checks/licenses", { endpointIds: [PC, PC.toUpperCase(), SRV, PC, SRV.toUpperCase()], direction: "source-to-dest" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.selected, { total: 2, computers: 1, servers: 1, unknown: 0 });
+    assert.deepEqual(res.body.seats.map((s) => [s.name, s.needed, s.free, s.short]), [["Sophos XDR - User", 1, 1, false], ["Sophos XDR - Server", 1, 1, false]]);
+    assert.deepEqual(res.body.warnings.filter((w) => /free seat/.test(w)), []);
+    const reads = fake.calls.filter((c) => c.kind === "tenant" && c.path.startsWith("/endpoint/v1/endpoints/"));
+    assert.deepEqual(reads.map((c) => c.path.split("/").pop()), [PC, SRV], "each device is read once, by the spelling listed first");
+    assert.equal(fake.writes().length, 0);
+  } finally {
+    await http.close();
+  }
+});
+
 test("scope header: an explicit X-Tenant-ID replaces a partner's identity header", async () => {
   const seen = [];
   const saved = globalThis.fetch;
