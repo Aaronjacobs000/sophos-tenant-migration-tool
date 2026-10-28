@@ -13,7 +13,7 @@
 
 import { requireContext } from "../state.js";
 import { listLicenses, type SophosLicense } from "../sophos/api/licenses.js";
-import { getEndpoint } from "../sophos/api/endpoints.js";
+import { getEndpointsByIds } from "../sophos/api/endpoints.js";
 import { getSectionData } from "./preloader.js";
 import type { TenantLabel } from "../sophos/tenant-context.js";
 import type { SophosEndpoint } from "../sophos/types/sophos.js";
@@ -232,25 +232,26 @@ export async function checkLicenses(req: {
 
 /**
  * Count the selected devices by class. Uses the preload cache for the sending
- * side and reads any device it does not hold.
+ * side and reads the devices it does not hold, a batch of IDs per call.
  */
 async function countSelected(side: TenantLabel, ids: string[]): Promise<SelectedCounts> {
   const counts: SelectedCounts = { total: ids.length, computers: 0, servers: 0, unknown: 0 };
   const cached = getSectionData(side, "endpoints");
   const byId = new Map<string, SophosEndpoint>();
   if (cached.status.state === "ok") {
-    for (const ep of cached.items as SophosEndpoint[]) byId.set(ep.id, ep);
+    for (const ep of cached.items as SophosEndpoint[]) byId.set(ep.id.toLowerCase(), ep);
   }
-  const ctx = requireContext(side);
+  const missing = ids.filter((id) => !byId.has(id.toLowerCase()));
+  if (missing.length) {
+    const ctx = requireContext(side);
+    const read = await getEndpointsByIds(ctx.client, ctx.tenantId, missing);
+    for (const ep of read.records) byId.set(ep.id.toLowerCase(), ep);
+  }
   for (const id of ids) {
-    let ep = byId.get(id);
+    const ep = byId.get(id.toLowerCase());
     if (!ep) {
-      try {
-        ep = await getEndpoint(ctx.client, ctx.tenantId, id);
-      } catch {
-        counts.unknown++;
-        continue;
-      }
+      counts.unknown++;
+      continue;
     }
     if (ep.type === "server" || ep.os?.isServer) counts.servers++;
     else counts.computers++;

@@ -123,7 +123,22 @@ export function createFakeSophos() {
     if (!tenant) throw new Error(`fake-sophos: unexpected host ${url.origin}`);
     if (headers["x-tenant-id"] !== tenant.tenantId) return json(403, { error: "Forbidden", message: "tenant header mismatch" });
     calls.push({ kind: "tenant", tenant: tenant === SRC ? "src" : tenant === DST ? "dst" : tenant === OTHER ? "oth" : tenant.tenantId, ...req, url: url.href });
+    // The gateway refuses a request line over 7,168 bytes (measured 29/10/2026).
+    if (`${method} ${url.pathname}${url.search} HTTP/1.1`.length > 7168) {
+      return json(414, { fault: { faultstring: "request line size exceeding 7,168", detail: { errorcode: "protocol.http.TooBigLine" } } });
+    }
     const route = match(routes[tenant.tenantId], method, url.pathname);
+    // A list by IDs with no route of its own answers from the per-device routes, as the API does.
+    if (!route && method === "GET" && url.pathname === "/endpoint/v1/endpoints" && url.searchParams.get("ids")) {
+      const items = [];
+      for (const id of url.searchParams.get("ids").split(",")) {
+        const one = match(routes[tenant.tenantId], "GET", `/endpoint/v1/endpoints/${id}`);
+        if (!one) continue;
+        const res = respond(await one.handler({ ...req, path: `/endpoint/v1/endpoints/${id}`, query: {} }));
+        if (res.status === 200) items.push(await res.json());
+      }
+      return json(200, { items, pages: { size: items.length, maxSize: 500 } });
+    }
     if (!route) {
       if (method === "GET") return json(200, { items: [], pages: { current: 1, size: 100, total: 1, maxSize: 100 } });
       return json(404, { error: "NotFound", message: `fake: no route for ${method} ${url.pathname}` });

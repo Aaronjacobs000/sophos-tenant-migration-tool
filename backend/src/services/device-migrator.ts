@@ -2,8 +2,9 @@
  * Two-tenant device migration orchestration.
  *
  * Workflow (matches Sophos docs):
- *   1. Preflight: read each selected source endpoint, reject any that
- *      haven't checked in within the last 14 days.
+ *   1. Preflight: read the selected source endpoints (GET /endpoints?ids=,
+ *      in batches), reject any that haven't checked in within the last
+ *      14 days.
  *   2. POST receiver job on DESTINATION → returns job id + handshake token.
  *   3. PUT sender trigger on SOURCE using the SAME job id + token.
  *      (This is NOT a second POST; it triggers the existing job.)
@@ -14,9 +15,7 @@
  */
 
 import { requireContext } from "../state.js";
-import {
-  getEndpoint,
-} from "../sophos/api/endpoints.js";
+import { getEndpointsByIds } from "../sophos/api/endpoints.js";
 import {
   createReceiverJob,
   triggerSenderJob,
@@ -158,17 +157,19 @@ export async function startMigration(
     };
   }
 
-  // Step 1: preflight, load each endpoint from the "from" side
+  // Step 1: preflight, read the selected endpoints on the "from" side, a
+  // batch of IDs per call rather than one call per device.
   const preflightFailures: PreflightFailure[] = [];
   const acceptedEndpoints: SophosEndpoint[] = [];
+  const read = await getEndpointsByIds(from.client, from.tenantId, req.endpointIds);
+  const recordById = new Map(read.records.map((ep) => [ep.id.toLowerCase(), ep]));
+  const readError = new Map(read.failed.flatMap((f) => f.ids.map((id) => [id.toLowerCase(), f.error] as const)));
   for (const id of req.endpointIds) {
-    let ep: SophosEndpoint;
-    try {
-      ep = await getEndpoint(from.client, from.tenantId, id);
-    } catch (err) {
+    const ep = recordById.get(id.toLowerCase());
+    if (!ep) {
       preflightFailures.push({
         endpointId: id,
-        reason: err instanceof Error ? err.message : String(err),
+        reason: readError.get(id.toLowerCase()) ?? "not found on the sending tenant",
       });
       continue;
     }

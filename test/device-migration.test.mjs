@@ -335,8 +335,8 @@ test("a device listed more than once is read once and sent once", async () => {
   const res = await startMigration({ jobName: "repeats", endpointIds: [DEVICE, MAC, DEVICE, `source::${DEVICE}`, MAC.toUpperCase(), ` ${MAC} `] });
   assert.ok(res.job);
   assert.deepEqual(res.job.endpointIds, [DEVICE, MAC]);
-  const reads = fake.calls.filter((c) => c.kind === "tenant" && c.method === "GET" && c.path.startsWith("/endpoint/v1/endpoints/"));
-  assert.deepEqual(reads.map((c) => c.path.split("/").pop()), [DEVICE, MAC], "each device is read once");
+  const reads = fake.calls.filter((c) => c.kind === "tenant" && c.method === "GET" && c.path.startsWith("/endpoint/v1/endpoints"));
+  assert.deepEqual(reads.map((c) => [c.path, c.query.ids]), [["/endpoint/v1/endpoints", `${DEVICE},${MAC}`]], "each device is read once, in one call");
   const writes = migrationWrites();
   assert.deepEqual(writes.map((w) => `${w.tenant} ${w.method}`), ["dst POST", "src PUT"]);
   assert.deepEqual(writes[0].body.endpoints, [DEVICE, MAC]);
@@ -361,5 +361,46 @@ test("repeats do not count towards the 1000 limit, and the limit message counts 
     assert.deepEqual(fake.calls.filter((c) => c.kind === "tenant"), [], "no call to either tenant");
   } finally {
     await http.close();
+  }
+});
+
+// The pre-flight reads the selection in batches with GET /endpoints?ids=, not one call per device.
+const listReads = () => fake.calls.filter((c) => c.kind === "tenant" && c.method === "GET" && c.path.startsWith("/endpoint/v1/endpoints"));
+
+test("the pre-flight reads 1000 devices in 10 calls of 100 IDs, each under the gateway's request line limit", async () => {
+  fake.reset();
+  const res = await startMigration({ jobName: "batched", endpointIds: many(1000), dryRun: true });
+  assert.deepEqual(res.preflightFailures, []);
+  assert.equal(res.plan.receiverBody.endpoints.length, 1000);
+  const reads = listReads();
+  assert.equal(reads.length, 10);
+  for (const r of reads) {
+    assert.equal(r.path, "/endpoint/v1/endpoints");
+    assert.equal(r.query.ids.split(",").length, 100);
+    assert.ok(`GET ${new URL(r.url).pathname}${new URL(r.url).search} HTTP/1.1`.length <= 7168, "the fake refuses longer lines with 414");
+  }
+  assert.deepEqual(reads.flatMap((r) => r.query.ids.split(",")), many(1000), "every device once, in the order selected");
+});
+
+test("a batch Sophos refuses fails only its own devices, with what Sophos said; a device with no record is not found", async () => {
+  const ids = many(150);
+  const gone = ids[7];
+  fake.on(SRC, "GET", "/endpoint/v1/endpoints", (req) => {
+    const asked = req.query.ids.split(",");
+    if (asked.includes(ids[120])) return { status: 403, body: { error: "Forbidden", message: "not for you" } };
+    return { body: { items: asked.filter((id) => id !== gone).map((id) => ({ id, hostname: "BULK", type: "computer", lastSeenAt: recent })), pages: {} } };
+  });
+  try {
+    fake.reset();
+    const res = await startMigration({ jobName: "partial", endpointIds: ids, dryRun: true });
+    assert.equal(res.plan, undefined, "nothing is planned while a device fails");
+    assert.equal(res.preflightFailures.length, 51);
+    assert.deepEqual(res.preflightFailures[0], { endpointId: gone, reason: "not found on the sending tenant" });
+    assert.deepEqual(res.preflightFailures.slice(1).map((f) => f.endpointId), ids.slice(100));
+    for (const f of res.preflightFailures.slice(1)) assert.match(f.reason, /^Sophos API error 403: Forbidden - not for you/);
+    assert.equal(listReads().length, 2);
+    assert.deepEqual(fake.writes(), []);
+  } finally {
+    fake.on(SRC, "GET", "/endpoint/v1/endpoints", (req) => ({ body: { items: req.query.ids.split(",").map((id) => ({ id, hostname: "BULK", type: "computer", lastSeenAt: recent })), pages: {} } }));
   }
 });

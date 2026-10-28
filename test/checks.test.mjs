@@ -134,8 +134,8 @@ test("licence check: a device listed more than once is read and counted once, so
     assert.deepEqual(res.body.selected, { total: 2, computers: 1, servers: 1, unknown: 0 });
     assert.deepEqual(res.body.seats.map((s) => [s.name, s.needed, s.free, s.short]), [["Sophos XDR - User", 1, 1, false], ["Sophos XDR - Server", 1, 1, false]]);
     assert.deepEqual(res.body.warnings.filter((w) => /free seat/.test(w)), []);
-    const reads = fake.calls.filter((c) => c.kind === "tenant" && c.path.startsWith("/endpoint/v1/endpoints/"));
-    assert.deepEqual(reads.map((c) => c.path.split("/").pop()), [PC, SRV], "each device is read once, by the spelling listed first");
+    const reads = fake.calls.filter((c) => c.kind === "tenant" && c.path.startsWith("/endpoint/v1/endpoints"));
+    assert.deepEqual(reads.map((c) => [c.path, c.query.ids]), [["/endpoint/v1/endpoints", `${PC},${SRV}`]], "each device is read once, by the spelling listed first, in one call");
     assert.equal(fake.writes().length, 0);
   } finally {
     await http.close();
@@ -161,4 +161,20 @@ test("scope header: an explicit X-Tenant-ID replaces a partner's identity header
   assert.equal(seen[0]["X-Tenant-ID"], "tenant-9");
   assert.equal(seen[0]["X-Partner-ID"], undefined);
   assert.equal(seen[1]["X-Partner-ID"], "partner-1");
+});
+
+test("licence check: devices the preload cache does not hold are read 100 IDs a call, not one call each", async () => {
+  const ids = Array.from({ length: 250 }, (_, i) => `00000000-0000-4000-8000-2${String(i).padStart(11, "0")}`);
+  fake.reset();
+  fake.onGlobal("GET", "/licenses/v1/licenses", () => ({ body: { licenses: [] } }));
+  fake.on(SRC, "GET", "/endpoint/v1/endpoints", (req) => ({
+    body: { items: req.query.ids.split(",").filter((id) => !id.endsWith("9")).map((id, i) => ({ id, hostname: "h", type: i % 2 ? "server" : "computer" })), pages: {} },
+  }));
+  const res = await checkLicenses({ endpointIds: ids, direction: "source-to-dest" });
+  const reads = fake.calls.filter((c) => c.kind === "tenant" && c.path.startsWith("/endpoint/v1/endpoints"));
+  assert.deepEqual(reads.map((c) => [c.path, c.query.ids.split(",").length]), [["/endpoint/v1/endpoints", 100], ["/endpoint/v1/endpoints", 100], ["/endpoint/v1/endpoints", 50]]);
+  assert.equal(res.selected.total, 250);
+  assert.equal(res.selected.unknown, 25, "devices with no record are counted as unread");
+  assert.equal(res.selected.computers + res.selected.servers, 225);
+  assert.equal(fake.writes().length, 0);
 });
