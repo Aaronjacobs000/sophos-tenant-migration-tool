@@ -72,6 +72,10 @@ migrateDevicesRouter.post("/migrate/devices", requireConfigured, async (req, res
       direction,
       dryRun,
     });
+    if (result.deviceLimitFailure) {
+      res.status(400).json({ error: "too_many_devices", message: result.deviceLimitFailure });
+      return;
+    }
     if (result.settingFailure) {
       res.status(400).json({ error: "migration_not_allowed", message: result.settingFailure });
       return;

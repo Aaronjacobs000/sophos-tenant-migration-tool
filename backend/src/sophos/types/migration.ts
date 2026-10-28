@@ -99,6 +99,8 @@ export interface SophosMigrationJob {
   errorCode?: string;
   errorMessage?: string;
   createdAt?: string;
+  /** When the job expires. A move must start, and finish, before then. */
+  expiresAt?: string;
   finishedAt?: string;
   endpointCounts?: {
     total?: number;

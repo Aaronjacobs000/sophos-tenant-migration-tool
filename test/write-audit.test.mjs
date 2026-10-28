@@ -155,16 +155,16 @@ test("a write Sophos refuses is audited with the error", async () => {
   refuse = () => false;
 });
 
-test("a refused sender trigger is audited, and so is removing the receiving job", async () => {
+test("a refused sender trigger is audited, and no DELETE is sent for the receiving job, since Sophos has none", async () => {
   refuse = (tenant, method) => tenant === SRC && method === "PUT";
-  const { res, entries } = await send(WRITES["POST /migrate/devices"]);
+  const { res, writes, entries } = await send(WRITES["POST /migrate/devices"]);
   refuse = () => false;
   assert.notEqual(res.status, 201);
   assert.deepEqual(entries.map((e) => [e.tenantId, e.action, e.resource, e.ok]), [
     [DST.tenantId, "create", "migration-receiver", true],
     [SRC.tenantId, "create", "migration-sender", false],
-    [DST.tenantId, "delete", "migration-receiver", true],
   ]);
+  assert.deepEqual(writes.map((w) => `${w.tenant} ${w.method}`), ["dst POST", "src PUT"]);
 });
 
 test("the generic routes record what they wrote", async () => {

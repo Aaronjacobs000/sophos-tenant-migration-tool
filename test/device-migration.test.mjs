@@ -1,15 +1,17 @@
-// Device moves: both tenants must allow migration, and there is no cancel, because Sophos has none.
+// Device moves: both tenants must allow migration, there is no cancel or delete, because Sophos has none,
+// and a job takes at most 1000 devices.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFakeSophos, SRC, DST } from "./helpers/fake-sophos.mjs";
 import { readFile } from "node:fs/promises";
-import { bootApp } from "./helpers/app.mjs";
+import { bootApp, readAudit } from "./helpers/app.mjs";
 
 const fake = createFakeSophos();
-await bootApp(fake);
+const { root } = await bootApp(fake);
 const migrator = await import("../backend/dist/services/device-migrator.js");
 const { startMigration } = migrator;
 const { migrateDevicesRouter } = await import("../backend/dist/routes/migrate-devices.js");
+const migrationsApi = await import("../backend/dist/sophos/api/migrations.js");
 
 const DEVICE = "00000000-0000-4000-8000-000000000001";
 const recent = new Date(Date.now() - 60e3).toISOString();
@@ -102,6 +104,7 @@ test("no route or service can cancel or delete a job", () => {
   assert.ok(routes.includes("post /migrate/devices"), "the router is the real one");
   assert.deepEqual(routes.filter((r) => r.startsWith("delete")), []);
   assert.equal(migrator.cancelJob, undefined);
+  assert.equal(migrationsApi.deleteMigrationJob, undefined, "the API reference lists no DELETE for migrations");
 });
 
 test("the job page has no Cancel button and says a move can't be cancelled", async () => {
@@ -110,4 +113,125 @@ test("the job page has no Cancel button and says a move can't be cancelled", asy
   assert.doesNotMatch(html, /cancel-btn|Cancel migration/);
   assert.match(html, /can't be cancelled/);
   assert.doesNotMatch(js, /api\.del\(|cancel-btn/);
+});
+
+// A trigger that fails with a clear answer: no DELETE (Sophos has none), and the error says the receiving job stays.
+const EXPIRES = "2026-11-12T03:04:05.678Z";
+const receiving = (extra = {}) => () => ({ status: 201, body: { id: "job-1", token: "handshake", mode: "receiving", createdAt: "2026-10-29T03:04:05.678Z", ...extra } });
+const restoreJobRoutes = () => {
+  fake.on(DST, "POST", "/endpoint/v1/migrations", () => ({ status: 201, body: { id: "job-1", token: "handshake", mode: "receiving" } }));
+  fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => ({ body: { id: "job-1", mode: "sending" } }));
+};
+const deletes = () => fake.calls.filter((c) => c.method === "DELETE");
+const LEFT = "The move did not start. The receiving job job-1 on Test Destination stays in place until it expires";
+
+test("a trigger Sophos refuses sends no DELETE, and says the receiving job stays until it expires", async () => {
+  setting.src = { enabled: true, expiresAt: "2099-01-01T00:00:00Z" };
+  setting.dst = { enabled: true, expiresAt: "2099-01-01T00:00:00Z" };
+  fake.on(DST, "POST", "/endpoint/v1/migrations", receiving({ expiresAt: EXPIRES }));
+  fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => ({ status: 400, body: { error: "BadRequest", message: "Invalid token" } }));
+  try {
+    fake.reset();
+    const auditBefore = (await readAudit(root)).length;
+    const err = await startMigration({ jobName: "refused trigger", endpointIds: [DEVICE] }).catch((e) => e);
+    assert.ok(err instanceof Error);
+    assert.equal(err.message, `Sophos API error 400: BadRequest - Invalid token. ${LEFT} on 2026-11-12 03:04 UTC, because the Sophos API cannot delete a migration job.`);
+    assert.equal(err.status, 400, "the status Sophos answered with is kept");
+    assert.deepEqual(migrationWrites().map((w) => `${w.tenant} ${w.method}`), ["dst POST", "src PUT"]);
+    assert.deepEqual(deletes(), []);
+    const added = (await readAudit(root)).slice(auditBefore);
+    assert.deepEqual(added.map((e) => `${e.action} ${e.resource} ${e.ok}`), ["create migration-receiver true", "create migration-sender false"]);
+    assert.equal(added[1].error, "Sophos API error 400: BadRequest - Invalid token", "the audit keeps what Sophos said");
+  } finally {
+    restoreJobRoutes();
+  }
+});
+
+test("a refused trigger answers the page with Sophos's status and the receiving job note", async () => {
+  const { startHttp } = await import("./helpers/http.mjs");
+  const http = await startHttp([migrateDevicesRouter]);
+  fake.on(DST, "POST", "/endpoint/v1/migrations", receiving({ expiresAt: EXPIRES }));
+  fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => ({ status: 403, body: { error: "Forbidden", message: "not allowed" } }));
+  try {
+    fake.reset();
+    const res = await http.post("/api/migrate/devices", { jobName: "refused trigger", endpointIds: [DEVICE] });
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error, "sophos_error");
+    assert.match(res.body.message, /^Sophos API error 403: Forbidden - not allowed\. The move did not start\. The receiving job job-1 on Test Destination stays in place until it expires on 2026-11-12 03:04 UTC/);
+    assert.deepEqual(deletes(), []);
+  } finally {
+    restoreJobRoutes();
+    await http.close();
+  }
+});
+
+test("a trigger that never reached Sophos says the same, and gives 14 days when the job has no expiry", async () => {
+  fake.on(DST, "POST", "/endpoint/v1/migrations", receiving());
+  fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }); });
+  try {
+    fake.reset();
+    const err = await startMigration({ jobName: "unsent trigger", endpointIds: [DEVICE] }).catch((e) => e);
+    assert.equal(err.message, `Sophos API request failed: fetch failed (ECONNREFUSED). ${LEFT} 14 days after it was created, because the Sophos API cannot delete a migration job.`);
+    assert.deepEqual(migrationWrites().map((w) => `${w.tenant} ${w.method}`), ["dst POST", "src PUT"]);
+    assert.deepEqual(deletes(), []);
+  } finally {
+    restoreJobRoutes();
+  }
+});
+
+test("a trigger answered 500 keeps its own advice, with no DELETE and no 'did not start'", async () => {
+  fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => ({ status: 500, body: { error: "InternalError" } }));
+  fake.on(SRC, "GET", "/endpoint/v1/migrations/job-1", () => ({ status: 404, body: { error: "NotFound", message: "no such job" } }));
+  const { setReadBackDelays } = await import("../backend/dist/services/write-check.js");
+  setReadBackDelays([0, 0, 0]);
+  try {
+    fake.reset();
+    const err = await startMigration({ jobName: "unclear trigger", endpointIds: [DEVICE] }).catch((e) => e);
+    assert.match(err.message, /left in place in case the move started, and expires by itself after 14 days/);
+    assert.doesNotMatch(err.message, /did not start/);
+    assert.deepEqual(deletes(), []);
+  } finally {
+    setReadBackDelays([1000, 3000, 6000]);
+    restoreJobRoutes();
+  }
+});
+
+// The API reference: the POST and PUT bodies' endpoints "Must contain 1-1000 items".
+const many = (n) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-1${String(i).padStart(11, "0")}`);
+fake.on(SRC, "GET", /^\/endpoint\/v1\/endpoints\/00000000-0000-4000-8000-1\d{11}$/, (req) => ({ body: { id: req.path.split("/").pop(), hostname: "BULK", type: "computer", lastSeenAt: recent } }));
+
+test("a move of more than 1000 devices is refused before anything is read or sent", async () => {
+  for (const dryRun of [true, false]) {
+    fake.reset();
+    const res = await startMigration({ jobName: "too many", endpointIds: many(1001), dryRun });
+    assert.equal(res.deviceLimitFailure, "1001 devices are selected, and Sophos accepts at most 1000 in one migration job through its API, so nothing was sent. Start a move for each batch of 1000 or fewer.");
+    assert.equal(res.plan, undefined);
+    assert.equal(res.job, undefined);
+    assert.deepEqual(fake.calls.filter((c) => c.kind === "tenant"), [], "no call to either tenant");
+  }
+});
+
+test("the start route refuses more than 1000 devices as too_many_devices, and the page shows the message as it is", async () => {
+  const { startHttp } = await import("./helpers/http.mjs");
+  const http = await startHttp([migrateDevicesRouter]);
+  try {
+    fake.reset();
+    const res = await http.post("/api/migrate/devices", { jobName: "too many", endpointIds: many(2500) });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "too_many_devices");
+    assert.match(res.body.message, /^2500 devices are selected, and Sophos accepts at most 1000 in one migration job/);
+    assert.deepEqual(fake.calls.filter((c) => c.kind === "tenant"), []);
+    const js = await readFile(new URL("../frontend/js/page-migrate.js", import.meta.url), "utf8");
+    const hint = new Function(`${js.slice(js.indexOf("function migrationErrorHint"), js.indexOf("boot();"))}; return migrationErrorHint;`)();
+    assert.equal(hint({ message: res.body.message, body: res.body }, "x"), res.body.message);
+  } finally {
+    await http.close();
+  }
+});
+
+test("a move of exactly 1000 devices goes ahead", async () => {
+  fake.reset();
+  const res = await startMigration({ jobName: "at the limit", endpointIds: many(1000), dryRun: true });
+  assert.equal(res.deviceLimitFailure, undefined);
+  assert.equal(res.plan.receiverBody.endpoints.length, 1000);
 });

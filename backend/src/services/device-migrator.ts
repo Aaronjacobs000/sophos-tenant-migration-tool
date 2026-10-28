@@ -20,9 +20,9 @@ import {
 import {
   createReceiverJob,
   triggerSenderJob,
-  deleteMigrationJob,
   getMigrationJob,
   listMigrationJobEndpoints,
+  MAX_ENDPOINTS_PER_JOB,
 } from "../sophos/api/migrations.js";
 import {
   createJob,
@@ -32,11 +32,11 @@ import {
   type EndpointGroupRef,
   type LocalMigrationJob,
 } from "./migration-store.js";
-import { auditOrWarn, auditedDelete } from "./audit-log.js";
+import { auditOrWarn } from "./audit-log.js";
 import { foundNote, isUnclearWrite, notFound, readBack } from "./write-check.js";
-import { checkMigrationWindow } from "./migration-window.js";
+import { checkMigrationWindow, formatDate } from "./migration-window.js";
 import { refreshCheckIns } from "./device-check-in.js";
-import { jobProgress } from "./job-progress.js";
+import { jobProgress, JOB_LIFETIME_MS } from "./job-progress.js";
 import {
   contextsForJob,
   forgetJobContexts,
@@ -49,6 +49,7 @@ import {
   withTenantNames,
 } from "./job-access.js";
 import { log, maskSecrets, registerSecret } from "../log.js";
+import { SophosHttpError } from "../sophos/client/sophos-client.js";
 import type { SophosEndpoint } from "../sophos/types/sophos.js";
 import type { SophosMigrationJob } from "../sophos/types/migration.js";
 import type { JobCredentialRefs, JobMonitor } from "./migration-store.js";
@@ -83,6 +84,8 @@ export interface StartMigrationResult {
    * job the API cannot delete, so nothing is created.
    */
   settingFailure?: string;
+  /** Set when more devices are selected than Sophos takes in one job. Nothing is read or sent. */
+  deviceLimitFailure?: string;
   /** Present in dry-run mode: the plan we would execute. */
   plan?: {
     sourceTenantId: string;
@@ -131,6 +134,15 @@ export async function startMigration(
   }
   // Replace req.endpointIds with the cleaned version
   req.endpointIds = cleanIds;
+
+  // Sophos takes at most 1000 devices in one job (API reference), so a larger
+  // selection is refused before any call, not after reading every device.
+  if (cleanIds.length > MAX_ENDPOINTS_PER_JOB) {
+    return {
+      preflightFailures: [],
+      deviceLimitFailure: `${cleanIds.length} devices are selected, and Sophos accepts at most ${MAX_ENDPOINTS_PER_JOB} in one migration job through its API, so nothing was sent. Start a move for each batch of ${MAX_ENDPOINTS_PER_JOB} or fewer.`,
+    };
+  }
 
   // Step 0: both tenants must allow device migration (Sophos help, "Device
   // migration", Sep 2026). A setting that cannot be read does not block.
@@ -322,10 +334,11 @@ export async function startMigration(
         detail: { jobName: req.jobName, direction, receiverId: receiver.id },
       });
     }
-    // Best effort, and audited like any other delete. An unclear trigger may
-    // have started the move, so its receiving job is left alone.
-    if (!isUnclearWrite((err as Error).cause ?? err)) {
-      await auditedDelete(to, "migration-receiver", receiver.id, () => deleteMigrationJob(to.client, to.tenantId, receiver.id)).catch(() => {});
+    // The API cannot delete a migration job, so the receiving job stays either
+    // way. After a clear failure the move did not start: say so, and when the
+    // job expires. An unclear trigger already says what to check.
+    if (!sender && !isUnclearWrite((err as Error).cause ?? err)) {
+      throw receivingJobLeft(err, receiver, tenantOf(to).name);
     }
     throw err;
   }
@@ -364,6 +377,20 @@ export async function startMigration(
   }
 
   return { preflightFailures: [], job };
+}
+
+/**
+ * A trigger that failed clearly, with what became of the receiving job. Keeps
+ * the status Sophos answered with, so the route passes it on as before.
+ */
+function receivingJobLeft(err: unknown, receiver: SophosMigrationJob, receivingName: string | null | undefined): Error {
+  const expiresAt = Date.parse(receiver.expiresAt ?? "");
+  const when = Number.isFinite(expiresAt)
+    ? `on ${formatDate(new Date(expiresAt))}`
+    : `${JOB_LIFETIME_MS / 86_400_000} days after it was created`;
+  const reason = (err instanceof Error ? err.message : String(err)).replace(/\.$/, "");
+  const message = `${reason}. The move did not start. The receiving job ${receiver.id} on ${receivingName ?? "the receiving tenant"} stays in place until it expires ${when}, because the Sophos API cannot delete a migration job.`;
+  return err instanceof SophosHttpError ? new SophosHttpError(message, err.status) : new Error(message, { cause: err });
 }
 
 const inFlight = new Map<string, Promise<LocalMigrationJob | null>>();
