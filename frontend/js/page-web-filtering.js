@@ -223,23 +223,65 @@ function showDeleteResults(results, dryRun) {
   });
 }
 
-function showResults(results, dryRun) {
+function showResults(results, dryRun, overwrite = false) {
   const creates = results.filter((r) => r.ok && (r.action === "create" || r.action === "dry-run-create")).length;
-  resultsModal({
-    title: dryRun ? "Preview: nothing was written" : "Copy results",
-    summary: dryRun
-      ? `${plural(creates, "item")} would be created on the destination.`
-      : `${plural(creates, "item")} created on the destination. Each write is in data/audit.log.`,
+  const replaced = results.filter((r) => r.ok && (r.action === "overwrite" || r.action === "dry-run-overwrite")).length;
+  const differing = results.filter((r) => r.ok && r.action === "differs");
+  const done = overwrite
+    ? `${plural(replaced, "item")} ${dryRun ? "would be replaced" : "replaced"} on the destination.`
+    : `${plural(creates, "item")} ${dryRun ? "would be created" : "created"} on the destination.`;
+  const modal = resultsModal({
+    title: dryRun ? "Preview: nothing was written" : overwrite ? "Overwrite results" : "Copy results",
+    summary: `${done}${differing.length ? ` ${plural(differing.length, "item")} with the same name ${differing.length === 1 ? "differs" : "differ"} on the destination.` : ""}${dryRun ? "" : " Each write is in data/audit.log."}`,
     groups: [
       { title: "Site lists", rows: results.filter((r) => r.kind === "site-list").map(row) },
       { title: "Profiles", rows: results.filter((r) => r.kind === "profile").map(row) },
     ],
   });
+  if (differing.length) offerOverwrite(modal, differing);
+}
+
+/**
+ * Under a result list with items that differ: replace them on the
+ * destination with the source version, after two confirmations.
+ */
+function offerOverwrite(modal, differing) {
+  const box = document.createElement("div");
+  box.className = "form-actions overwrite-offer";
+  box.innerHTML = `<p class="hint">An overwrite replaces each one on the destination with the source version, keeping the destination's name. Site lists go first, then profiles.</p>
+    <button type="button" class="btn btn-danger" data-overwrite>Overwrite ${esc(plural(differing.length, "item"))} on the destination</button>`;
+  modal.querySelector(".modal-body").appendChild(box);
+  box.querySelector("[data-overwrite]").addEventListener("click", async () => {
+    const names = differing.map((r) => `"${r.sourceName}"`).join(", ");
+    if (!confirm(`Overwrite ${plural(differing.length, "item")} on the destination with the source version?\n\n${names}`)) return;
+    if (!confirm(`Are you absolutely sure? The destination's current content of ${differing.length === 1 ? "this item" : "these items"} is replaced, and the tool can't put it back.`)) return;
+    const body = {
+      siteListIds: differing.filter((r) => r.kind === "site-list").map((r) => r.sourceId),
+      profileIds: differing.filter((r) => r.kind === "profile").map((r) => r.sourceId),
+      overwrite: true,
+    };
+    try {
+      const res = await api.post("/api/migrate/web-filters", body);
+      const results = res.results ?? [];
+      const failed = results.filter((r) => !r.ok).length;
+      toast(`Replaced ${results.filter((r) => r.ok && r.action === "overwrite").length} / failed ${failed}`, failed ? "err" : "ok");
+      showResults(results, false, true);
+      await Promise.all(Object.keys(TABS).map((tab) => load(tab, "dest")));
+      renderActive();
+    } catch (err) {
+      toast(err.message || "Overwrite failed", "err");
+    }
+  });
 }
 
 function row(r) {
+  const outcome = !r.ok ? "failed"
+    : r.action === "differs" ? "differs"
+      : r.action === "overwrite" ? "updated"
+        : r.action === "dry-run-overwrite" ? "would-update"
+          : outcomeOf(r);
   return {
-    outcome: outcomeOf(r),
+    outcome,
     text: r.note ? `${r.sourceName} (${r.note})` : r.sourceName,
     error: r.error,
     notes: notesOf(r),
