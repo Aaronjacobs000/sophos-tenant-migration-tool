@@ -75,11 +75,36 @@
 
       <section class="panel-card">
         <h2>Checks before a move</h2>
-        <p>The Start migration page runs two read-only checks:</p>
+        <p>The Start migration page runs three read-only checks:</p>
         <ul>
           <li>Device Migration setting: whether both tenants allow migration, and when that ends. The tool creates no job while either has it off, and it warns when a window closes within a day, because devices that have not checked in by then will not move.</li>
           <li>Destination licences: free seats against the selected computers and servers, and products the source has that the destination lacks (endpoint and server protection, XDR, MDR, Device Encryption). Product names map loosely to features, so it warns and never blocks.</li>
+          <li>Tamper protection: the global setting on both tenants, and how many selected devices have it on now. A moved device takes the receiving tenant's setting, so it warns when the receiving tenant has it off. It never blocks.</li>
         </ul>
+      </section>
+
+      <section class="panel-card">
+        <h2>Tamper protection</h2>
+        <p>You don't need to turn off tamper protection to move devices. A moved device takes the receiving tenant's
+          tamper protection when it arrives, so if that tenant has it off under <strong>Global Settings &gt; Tamper
+          Protection</strong>, moved devices arrive without it. Turn it on there first; the API can only read that setting.</p>
+        <p>The job page shows each device's tamper protection at the source and after it arrives, and flags a device
+          that had it on and arrived without it. Its <strong>Tamper protection</strong> card turns it on and makes each
+          device a new password, so a password from before the move stops working. Both are on by default, and the
+          choices are remembered for the job in that browser. It runs only when you confirm, on devices that have checked
+          in, and reads each one back. No password is shown or kept.</p>
+        <p>If a device can't move through the API, for example an agent too old to migrate, register it to the new tenant
+          by hand. On Windows that is <code>SophosSetup.exe --registeronly</code>, which needs tamper protection off on
+          the device. Turn it off in Sophos Fusion for those devices only and register them. Then, on the tenant they
+          joined, turn tamper protection back on, with a new password. Keep a list, so no device is left without it.</p>
+      </section>
+
+      <section class="panel-card">
+        <h2>Scan arrived devices</h2>
+        <p>The job page's <strong>Scan arrived devices</strong> card asks each device that has checked in to run a scan
+          under the receiving tenant's policies. Sophos only says a scan was requested; a scan that runs shows as an event
+          on the device in Sophos Fusion. Many devices scanning at once slows them down, servers especially, so it runs
+          only when you confirm.</p>
       </section>
 
       <section class="panel-card">
@@ -104,6 +129,12 @@
           profile with the same name. With no such profile the policy is not cloned, and the result names the profile to copy first.</p>
         <p>To undo a copy, delete the destination site list or profile from its row menu. A preview runs first,
           and the destination refuses while a policy uses the profile or a profile uses the list.</p>
+        <p>A tenant holds at most 20 site lists, and a list at most 750 sites, so a copy that would pass either is not
+          sent. Preset and category names can differ between tenants: a profile with a name the destination doesn't have
+          is not sent, and the result names it.</p>
+        <p>A list or profile already on the destination by name is compared. If its content differs, the result says
+          <em>differs</em> and what differs, and offers to overwrite it with the source version. That asks twice, and
+          keeps the destination's name.</p>
       </section>
 
       <section class="panel-card">
@@ -130,15 +161,17 @@
           <li>Groups, then policies, so each policy can be assigned to the groups with the same names.</li>
           <li>Other exclusions and lists.</li>
           <li>Devices, then group membership from the job page, then clone the policies again to add the devices they are assigned to.</li>
+          <li>Tamper protection on the arrived devices from the job page, and a scan if you want one.</li>
         </ol>
       </section>
 
       <section class="panel-card">
         <h2>Dry runs</h2>
-        <p>Policies, exclusions, web filtering, device migrations and group membership can be previewed first: the
-          <strong>Preview</strong> buttons on the Policies, Compare, Exclusions and Web filtering pages,
-          <strong>Preview (dry run)</strong> on Start migration, and <strong>Preview</strong> on the job page's
-          Group membership card return the plan the server <em>would</em> carry out without touching the destination.
+        <p>Policies, exclusions, web filtering, device migrations, group membership, tamper protection and scans can be
+          previewed first: the <strong>Preview</strong> buttons on the Policies, Compare, Exclusions and Web filtering
+          pages, <strong>Preview (dry run)</strong> on Start migration, and <strong>Preview</strong> on the job page's
+          Group membership card, Tamper protection card and Scan arrived devices card return the plan the server
+          <em>would</em> carry out without touching the destination.
           A policy preview lists each assignment it would add and each one it can't match, with the reason. Use them
           the first few times until you are comfortable with what gets created.</p>
         <p>The Groups page has no preview: <strong>Mirror</strong> writes to the destination as soon as you confirm.</p>

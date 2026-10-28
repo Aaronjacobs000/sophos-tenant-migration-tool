@@ -161,3 +161,12 @@ test("the Start migration page has the tamper protection card, which says no tam
   assert.match(js, /You don't need to turn off tamper protection to move devices\./);
 });
 
+test("Help and the README say tamper protection can stay on for a move, and how to handle a failed move", async () => {
+  const help = await readFile(new URL("../frontend/help.html", import.meta.url), "utf8");
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  for (const text of [help, readme]) {
+    assert.ok(text.includes("You don't need to turn off tamper protection to move devices."));
+    assert.match(text, /--registeronly/);
+    assert.match(text, /turn tamper protection back on/i);
+  }
+});
