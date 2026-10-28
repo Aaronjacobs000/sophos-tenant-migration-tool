@@ -14,6 +14,9 @@
  *
  * The sender does NOT create a new job; it triggers the existing receiver
  * job via PUT using the same migration job ID.
+ *
+ * There is no DELETE: the API reference lists none, and DELETE answered 404
+ * on 25/09/2026. A job stays until its expiresAt.
  */
 
 import type { SophosClient } from "../client/sophos-client.js";
@@ -24,6 +27,9 @@ import type {
 } from "../types/migration.js";
 
 const MIGRATIONS_PATH = "/endpoint/v1/migrations";
+
+/** Most devices one job takes: the POST and PUT bodies' endpoints "Must contain 1-1000 items" (API reference). */
+export const MAX_ENDPOINTS_PER_JOB = 1000;
 
 /** Every job, reading all pages: without pageTotal the API gives no page count, so it asks for one. */
 export async function listMigrationJobs(
@@ -91,16 +97,6 @@ export async function triggerSenderJob(
     `${MIGRATIONS_PATH}/${jobId}`,
     { method: "PUT", body },
   );
-}
-
-export async function deleteMigrationJob(
-  client: SophosClient,
-  tenantId: string,
-  id: string,
-): Promise<void> {
-  await client.tenantRequest(tenantId, `${MIGRATIONS_PATH}/${id}`, {
-    method: "DELETE",
-  });
 }
 
 /** Every device in a job, reading all pages: without pageTotal the API gives no page count, so it asks for one. */
