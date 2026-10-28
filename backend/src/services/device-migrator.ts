@@ -10,7 +10,9 @@
  *      (This is NOT a second POST; it triggers the existing job.)
  *   4. Persist the job ID to data/migration-jobs.json, with the group each
  *      device was in on the sending tenant (read in step 1), so the job page
- *      can put moved devices back into same-named groups afterwards.
+ *      can put moved devices back into same-named groups afterwards, and its
+ *      tamper protection there, so the job page can flag a device that
+ *      arrives without it.
  *   5. UI subscribes via SSE to /api/migrate/devices/jobs/:id/stream.
  */
 
@@ -30,11 +32,12 @@ import {
   updateJob,
   type EndpointGroupRef,
   type LocalMigrationJob,
+  type TamperState,
 } from "./migration-store.js";
 import { auditOrWarn } from "./audit-log.js";
 import { foundNote, isUnclearWrite, notFound, readBack } from "./write-check.js";
 import { checkMigrationWindow, formatDate } from "./migration-window.js";
-import { refreshCheckIns } from "./device-check-in.js";
+import { refreshCheckIns, tamperReading } from "./device-check-in.js";
 import { jobProgress, JOB_LIFETIME_MS } from "./job-progress.js";
 import {
   contextsForJob,
@@ -97,6 +100,8 @@ export interface StartMigrationResult {
     groups: Array<{ name: string; count: number }>;
     /** Devices in no group. */
     ungrouped: number;
+    /** Tamper protection on the sending tenant now, recorded with the job. */
+    tamperProtection: { on: number; off: number; unsupported: number };
   };
   /** Present in real run: the persisted local job. */
   job?: LocalMigrationJob;
@@ -188,6 +193,7 @@ export async function startMigration(
 
   const endpointIds = acceptedEndpoints.map((e) => e.id);
   const endpointGroups = groupSnapshot(acceptedEndpoints);
+  const endpointTamperProtection = tamperSnapshot(acceptedEndpoints);
 
   if (req.dryRun) {
     return {
@@ -207,6 +213,7 @@ export async function startMigration(
           token: "<would be returned by receiver job>",
         },
         ...summariseGroups(endpointGroups),
+        tamperProtection: summariseTamper(endpointTamperProtection),
       },
     };
   }
@@ -373,6 +380,7 @@ export async function startMigration(
         acceptedEndpoints.map((e) => [e.id, e.hostname ?? ""]),
       ),
       endpointGroups,
+      endpointTamperProtection,
       direction,
       tenants: { source: tenantOf(sourceCtx), dest: tenantOf(destCtx) },
       credentials,
@@ -569,6 +577,32 @@ function groupSnapshot(endpoints: SophosEndpoint[]): Record<string, EndpointGrou
     out[ep.id] = group?.name ? { id: group.id, name: group.name } : null;
   }
   return out;
+}
+
+/**
+ * Each device's tamper protection on the sending tenant, from the same
+ * records, so the job page can flag a device that had it on and arrived
+ * without it. A moved device takes the receiving tenant's setting.
+ */
+export function tamperSnapshot(endpoints: SophosEndpoint[]): Record<string, TamperState> {
+  const out: Record<string, TamperState> = {};
+  for (const ep of endpoints) {
+    const { enabled, supported } = tamperReading(ep as SophosEndpoint & { tamperProtectionSupported?: boolean | null }, "");
+    out[ep.id] = { enabled, supported };
+  }
+  return out;
+}
+
+function summariseTamper(snapshot: Record<string, TamperState>) {
+  let on = 0;
+  let off = 0;
+  let unsupported = 0;
+  for (const t of Object.values(snapshot)) {
+    if (t.supported === false) unsupported++;
+    else if (t.enabled === true) on++;
+    else off++;
+  }
+  return { on, off, unsupported };
 }
 
 function summariseGroups(snapshot: Record<string, EndpointGroupRef | null>) {

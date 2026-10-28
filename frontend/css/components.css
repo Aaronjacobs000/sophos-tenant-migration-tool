@@ -1015,10 +1015,17 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 .check-warnings li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-soft); font-size: 12.5px; color: #ffe6b8; }
 .check-warnings .ico { width: 14px; height: 14px; margin-top: 2px; color: var(--warn); }
 .check-foot { margin: 12px 0 0; }
+.check-main + p.hint { margin: 10px 0 0; }
 #membership-card { min-width: 0; }
 #membership-body .cell-name { white-space: nowrap; }
 .member-pick { height: 30px; min-width: 150px; max-width: 240px; font-size: 12.5px; }
 .member-pick.is-warn { border-color: var(--warn-line); background-color: var(--warn-soft); color: #ffe0a6; }
+#tamper-card, #scan-card { min-width: 0; }
+#tamper-body .cell-name, #scan-body .cell-name { white-space: nowrap; }
+.tamper-options { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; margin: 0 0 12px; }
+.tamper-scope { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; font-size: 13px; color: var(--ink-2); }
+.tamper-scope select { height: 30px; min-width: 0; flex: 1 1 auto; font-size: 12.5px; }
+.tp-bit.is-lost { color: var(--warn); font-weight: 650; }
 .tab-note { margin: 0 0 10px; }
 .result-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .result-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }

@@ -39,6 +39,10 @@ const state = {
   membershipPreviewed: false,
   // Destination group picked per device (by its ID on the sending tenant): a group ID, or null to leave it out.
   memberChoices: {},
+  // Tamper protection and scan cards: previewed once devices have arrived, then on demand.
+  arrivalPreviewed: false,
+  tamperShown: null,
+  scanShown: null,
   rows: new Map(),
   sig: {},
   wallPage: 0,
@@ -53,6 +57,8 @@ function boot() {
   }
   document.addEventListener("click", onAction);
   document.addEventListener("change", onMemberPick);
+  document.addEventListener("change", onTamperOption);
+  showTamperOptions();
   if (new URLSearchParams(window.location.search).get("view") === "wall") setWall(true);
   window.addEventListener("resize", () => {
     fitWall();
@@ -181,6 +187,24 @@ function render(job) {
       : "Available once devices have moved.";
     setHtml("membership-body", `<div class="empty-state">${text}</div>`);
   }
+
+  // The tamper protection and scan previews only read, so they run once devices have checked in.
+  if (!state.arrivalPreviewed && p.arrived > 0 && job.monitor?.state === "ok") {
+    state.arrivalPreviewed = true;
+    loadTamper(true);
+    loadScan(true);
+  } else if (!state.arrivalPreviewed) {
+    const text = p.arrived > 0 && !checkable(job)
+      ? "Available once this job's tenants can be checked again."
+      : "Available once devices have checked in.";
+    setHtml("tamper-body", `<div class="empty-state">${text}</div>`);
+    setHtml("scan-body", `<div class="empty-state">${text}</div>`);
+  }
+  // "Only those with it on at the source" needs the state the job recorded, which jobs from before 0.5.0 lack.
+  const scope = document.getElementById("tamper-scope");
+  const recorded = !!job.endpointTamperProtection;
+  scope.querySelector('option[value="was-on"]').disabled = !recorded;
+  if (!recorded && scope.value === "was-on") scope.value = "all";
 }
 
 function checkable(job) {
@@ -267,6 +291,11 @@ function renderAlerts(job) {
   for (const note of job.startNotes ?? []) {
     out.push(alert("info", "info", "Sophos gave no clear answer when this move started", `${esc(note)}.`, ""));
   }
+  if (p.tamperLost > 0) {
+    out.push(alert("warn", "lock", `${p.tamperLost} device${p.tamperLost === 1 ? "" : "s"} arrived without tamper protection`,
+      `${p.tamperLost === 1 ? "It" : "They"} had it on at the source. A moved device takes the receiving tenant's setting. The Tamper protection card below can turn it on.`,
+      actions(btn("goto-tamper", "Go to tamper protection", true))));
+  }
   if (checkable(job) && !p.finished && p.oldestWaitSince && Date.now() - Date.parse(p.oldestWaitSince) > WAIT_NOTE_MS) {
     const long = p.devices.filter((d) => d.state === "waiting" && Date.now() - Date.parse(d.handedOverAt) > WAIT_NOTE_MS).length;
     out.push(alert("info", "clock", `${long} device${long === 1 ? " has" : "s have"} waited over 2 hours to check in`,
@@ -342,9 +371,26 @@ function renderLanes(job) {
   }
 }
 
+/**
+ * A device's tamper protection for its lane: at the source on the left, on the
+ * receiving tenant on the right once it has arrived, flagged when it had it on
+ * and arrived without it.
+ */
+function tamperBit(d, side) {
+  const t = d.tamperProtection;
+  if (!t || t.supported === false) return "";
+  const value = side === "from" ? t.atSource : t.arrived;
+  if (typeof value !== "boolean") return "";
+  const state = value ? "on" : "off";
+  const title = side === "from"
+    ? `Tamper protection at the source when the job was created: ${state}`
+    : `Tamper protection on the receiving tenant: ${state}${t.readAt ? `, read ${formatWhen(t.readAt)}` : ""}${t.lost ? ". It was on at the source." : ""}`;
+  return ` · <span class="tp-bit${side === "to" && t.lost ? " is-lost" : ""}" title="${escAttr(title)}">TP ${value ? "on" : "off"}</span>`;
+}
+
 function laneRow(d) {
   const oldId = `<code class="lane-id" title="${escAttr(d.id)}">${esc(d.id.slice(0, 8))}</code>`;
-  const group = d.group ? ` · ${esc(d.group)}` : "";
+  const group = `${d.group ? ` · ${esc(d.group)}` : ""}${tamperBit(d, "from")}`;
   const fromTag = {
     requested: `<span class="tag tag-muted">Requested</span>`,
     waiting: `<span class="tag tag-accent">Handed over</span>`,
@@ -366,7 +412,7 @@ function laneRow(d) {
     to = `
       <div class="lane-dev">
         <span class="lane-host">${esc(d.hostname)}</span>
-        <span class="lane-sub">${newId}</span>
+        <span class="lane-sub">${newId}${tamperBit(d, "to")}</span>
       </div>
       <span class="lane-end"><span class="tag tag-ok">${icon("check")}Arrived</span>${checkInTime(d)}</span>`;
   } else if (d.state === "waiting") {
@@ -482,6 +528,11 @@ async function onAction(e) {
   if (action === "remove-creds") return removeCreds(btn);
   if (action === "membership-preview") return loadMembership(true);
   if (action === "membership-apply") return applyMembership();
+  if (action === "tamper-preview") return loadTamper(true);
+  if (action === "tamper-apply") return applyTamper();
+  if (action === "scan-preview") return loadScan(true);
+  if (action === "scan-apply") return applyScan();
+  if (action === "goto-tamper") return document.getElementById("tamper-card").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function checkNow(btn) {
@@ -746,6 +797,246 @@ function groupPicker(r, groups) {
     ...groups.map((g) => `<option value="${escAttr(g.id)}"${g.id === value ? " selected" : ""}>${esc(g.name)}${g.type === "server" ? " (servers)" : ""}</option>`),
   ].join("");
   return `<select class="member-pick${value ? "" : " is-warn"}" data-member-pick="${escAttr(r.endpointId)}" aria-label="Destination group for ${escAttr(r.hostname)}">${options}</select>`;
+}
+
+// ---------- tamper protection and scan after arrival ----------
+
+const TAMPER_DEFAULTS = { turnOn: true, newPasswords: true, scope: "all" };
+
+/** The choices for this job, as last set in this browser, or the defaults (both changes on). */
+function tamperOptions() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(`tamperOptions:${state.id}`) || "null");
+    if (saved && typeof saved === "object") {
+      return {
+        turnOn: typeof saved.turnOn === "boolean" ? saved.turnOn : TAMPER_DEFAULTS.turnOn,
+        newPasswords: typeof saved.newPasswords === "boolean" ? saved.newPasswords : TAMPER_DEFAULTS.newPasswords,
+        scope: saved.scope === "was-on" ? "was-on" : "all",
+      };
+    }
+  } catch {
+    // Storage can be blocked or empty: the defaults stand.
+  }
+  return { ...TAMPER_DEFAULTS };
+}
+
+function showTamperOptions() {
+  const o = tamperOptions();
+  document.getElementById("tamper-turn-on").checked = o.turnOn;
+  document.getElementById("tamper-new-passwords").checked = o.newPasswords;
+  document.getElementById("tamper-scope").value = o.scope;
+}
+
+/** The choices the card shows now. */
+function shownTamperOptions() {
+  return {
+    turnOn: document.getElementById("tamper-turn-on").checked,
+    newPasswords: document.getElementById("tamper-new-passwords").checked,
+    scope: document.getElementById("tamper-scope").value === "was-on" ? "was-on" : "all",
+  };
+}
+
+/** A changed choice is remembered for this job and previewed again, so Apply sends what the table shows. */
+function onTamperOption(e) {
+  if (!e.target.closest("[data-tamper-option]")) return;
+  const o = shownTamperOptions();
+  try {
+    localStorage.setItem(`tamperOptions:${state.id}`, JSON.stringify(o));
+  } catch {
+    // Not remembered; the choice still applies on this page.
+  }
+  if (state.arrivalPreviewed) loadTamper(true, { quiet: true });
+}
+
+let tamperSeq = 0;
+
+async function loadTamper(dryRun, { quiet = false } = {}) {
+  const seq = ++tamperSeq;
+  const apply = document.getElementById("tamper-apply");
+  apply.disabled = true;
+  const options = shownTamperOptions();
+  if (!options.turnOn && !options.newPasswords) {
+    setHtml("tamper-summary", "");
+    document.getElementById("tamper-body").innerHTML = `<div class="empty-state">Pick at least one change.</div>`;
+    return null;
+  }
+  if (quiet) document.getElementById("tamper-summary").innerHTML = `<span class="spin"></span>`;
+  else document.getElementById("tamper-body").innerHTML = `<p class="hint"><span class="spin"></span> ${dryRun ? "Reading tamper protection on the arrived devices" : "Changing tamper protection, then reading it back"}</p>`;
+  try {
+    const res = await api.post(`/api/migrate/devices/jobs/${encodeURIComponent(state.id)}/tamper-protection`, { dryRun, ...options });
+    if (seq !== tamperSeq) return res;
+    state.arrivalPreviewed = true;
+    state.tamperShown = res;
+    renderTamper(res);
+    refreshJob();
+    return res;
+  } catch (err) {
+    if (seq === tamperSeq) document.getElementById("tamper-body").innerHTML = `<div class="banner banner-err">${esc(err.message || "Tamper protection check failed")}</div>`;
+    return null;
+  }
+}
+
+async function applyTamper() {
+  const shown = state.tamperShown;
+  const n = shown?.counts?.["will-change"] ?? 0;
+  if (!n) return;
+  const o = shown.options;
+  const what = [o.turnOn ? "turn tamper protection on where it is off" : "", o.newPasswords ? "make a new tamper protection password" : ""].filter(Boolean).join(" and ");
+  if (!confirm(`For ${n} device${n === 1 ? "" : "s"} on ${shown.receivingName || "the receiving tenant"}: ${what}?\n\nThis writes to the receiving tenant.`)) return;
+  // The options Apply sends are the ones the preview used, so it does what the table showed.
+  const seq = ++tamperSeq;
+  document.getElementById("tamper-apply").disabled = true;
+  document.getElementById("tamper-body").innerHTML = `<p class="hint"><span class="spin"></span> Changing tamper protection, then reading it back</p>`;
+  try {
+    const res = await api.post(`/api/migrate/devices/jobs/${encodeURIComponent(state.id)}/tamper-protection`, { dryRun: false, turnOn: o.turnOn, newPasswords: o.newPasswords, scope: o.scope });
+    if (seq === tamperSeq) {
+      state.tamperShown = res;
+      renderTamper(res);
+    }
+    refreshJob();
+    const bad = (res.counts.failed ?? 0) + (res.counts.requested ?? 0);
+    toast(`Tamper protection: ${res.counts.changed ?? 0} done${bad ? `, ${bad} to check` : ""}.`, bad ? "err" : "ok");
+  } catch (err) {
+    if (seq === tamperSeq) document.getElementById("tamper-body").innerHTML = `<div class="banner banner-err">${esc(err.message || "Tamper protection change failed")}</div>`;
+  }
+}
+
+/**
+ * The tamper protection card saves what it read with the job. A finished job's
+ * stream has stopped, so the lanes and the flag are redrawn from the job here.
+ */
+async function refreshJob() {
+  try {
+    apply(await api.get(`/api/migrate/devices/jobs/${encodeURIComponent(state.id)}`));
+  } catch {
+    // The stream redraws them on its next update, if the job is still running.
+  }
+}
+
+const TAMPER_TAG = {
+  "will-change": ["tag-accent", "will change"],
+  changed: ["tag-ok", "done"],
+  requested: ["tag-warn", "requested"],
+  failed: ["tag-bad", "failed"],
+  "already-on": ["tag-muted", "already on"],
+  "not-supported": ["tag-muted", "no tamper protection"],
+  "out-of-scope": ["tag-muted", "left out"],
+  "not-arrived": ["tag-muted", "not arrived"],
+  "not-found": ["tag-warn", "record missing"],
+};
+
+const onOff = (v) => (v === true ? "on" : v === false ? "off" : "");
+
+function renderTamper(res) {
+  const c = res.counts;
+  const willChange = c["will-change"] ?? 0;
+  document.getElementById("tamper-apply").disabled = !res.dryRun || willChange === 0;
+  const parts = [];
+  if (res.dryRun && willChange) parts.push(`<span class="tag tag-accent">${willChange} to change</span>`);
+  if (c.changed) parts.push(`<span class="tag tag-ok">${c.changed} done</span>`);
+  if (c.requested) parts.push(`<span class="tag tag-warn">${c.requested} requested</span>`);
+  if (c.failed) parts.push(`<span class="tag tag-bad">${c.failed} failed</span>`);
+  if (res.globalEnabled === false) parts.push(`<span class="tag tag-warn">Off for the tenant</span>`);
+  document.getElementById("tamper-summary").innerHTML = parts.join(" ");
+
+  const notes = res.notes.length
+    ? `<ul class="check-warnings">${res.notes.map((n) => `<li>${icon("alert")}<span>${esc(n)}</span></li>`).join("")}</ul>`
+    : "";
+  const rows = res.rows.map((r) => {
+    const [cls, label] = TAMPER_TAG[r.status] ?? ["tag-muted", r.status];
+    const source = r.status === "not-supported" ? `<span class="hint">none</span>`
+      : r.atSource === undefined ? `<span class="hint">not recorded</span>` : onOff(r.atSource) || `<span class="hint">unknown</span>`;
+    const value = r.after !== undefined ? r.after : r.before;
+    // Not read for a device that hasn't arrived; none for one without tamper protection; amber when it was on at the source.
+    const now = r.status === "not-supported" ? `<span class="hint">none</span>`
+      : typeof value !== "boolean" ? `<span class="hint">not read</span>`
+        : value === false && r.atSource === true ? `<span class="tp-bit is-lost" title="On at the source">off</span>` : onOff(value);
+    const changes = r.changes.map((x) => (x === "turn-on" ? "turn on" : "new password")).join(", ");
+    const password = r.passwordChanged ? `<span class="hint">new password</span>` : "";
+    return `
+      <tr>
+        <td><span class="cell-name">${esc(r.hostname)}</span></td>
+        <td>${source}</td>
+        <td>${now}</td>
+        <td>${changes ? esc(changes) : `<span class="hint">none</span>`}</td>
+        <td><div class="status-stack"><span class="tag ${cls}">${esc(label)}</span>${password}${r.message ? `<span class="hint">${esc(r.message)}</span>` : ""}</div></td>
+      </tr>`;
+  }).join("");
+  document.getElementById("tamper-body").innerHTML = `
+    ${notes}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Device</th><th>At source</th><th>Now</th><th>Change</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="hint check-foot">${res.dryRun ? "Preview only. Nothing was written." : "Each request is in data/audit.log. No password is shown or kept."}</p>`;
+}
+
+let scanSeq = 0;
+
+async function loadScan(dryRun) {
+  const seq = ++scanSeq;
+  document.getElementById("scan-apply").disabled = true;
+  document.getElementById("scan-body").innerHTML = `<p class="hint"><span class="spin"></span> ${dryRun ? "Finding the arrived devices" : "Asking the devices to scan"}</p>`;
+  try {
+    const res = await api.post(`/api/migrate/devices/jobs/${encodeURIComponent(state.id)}/scan`, { dryRun });
+    if (seq !== scanSeq) return res;
+    state.arrivalPreviewed = true;
+    state.scanShown = res;
+    renderScan(res);
+    return res;
+  } catch (err) {
+    if (seq === scanSeq) document.getElementById("scan-body").innerHTML = `<div class="banner banner-err">${esc(err.message || "Scan check failed")}</div>`;
+    return null;
+  }
+}
+
+async function applyScan() {
+  const shown = state.scanShown;
+  const n = shown?.counts?.["will-scan"] ?? 0;
+  if (!n) return;
+  if (!confirm(`Ask ${n} device${n === 1 ? "" : "s"} on ${shown.receivingName || "the receiving tenant"} to run a scan now?\n\nThis writes to the receiving tenant, and many devices scanning at once slows them down.`)) return;
+  const res = await loadScan(false);
+  if (!res) return;
+  const failed = res.counts.failed ?? 0;
+  toast(`Scan requested on ${res.counts.requested ?? 0} device(s)${failed ? `, ${failed} failed` : ""}.`, failed ? "err" : "ok");
+}
+
+const SCAN_TAG = {
+  "will-scan": ["tag-accent", "will scan"],
+  requested: ["tag-ok", "requested"],
+  failed: ["tag-bad", "failed"],
+  "not-arrived": ["tag-muted", "not arrived"],
+  "not-found": ["tag-warn", "record missing"],
+};
+
+function renderScan(res) {
+  const c = res.counts;
+  const n = c["will-scan"] ?? 0;
+  document.getElementById("scan-apply").disabled = !res.dryRun || n === 0;
+  const parts = [];
+  if (res.dryRun && n) parts.push(`<span class="tag tag-accent">${n} to scan</span>`);
+  if (c.requested) parts.push(`<span class="tag tag-ok">${c.requested} requested</span>`);
+  if (c.failed) parts.push(`<span class="tag tag-bad">${c.failed} failed</span>`);
+  document.getElementById("scan-summary").innerHTML = parts.join(" ");
+  const rows = res.rows.map((r) => {
+    const [cls, label] = SCAN_TAG[r.status] ?? ["tag-muted", r.status];
+    const when = r.requestedAt ? `<span class="hint">${esc(formatWhen(r.requestedAt))}</span>` : "";
+    return `
+      <tr>
+        <td><span class="cell-name">${esc(r.hostname)}</span></td>
+        <td><div class="status-stack"><span class="tag ${cls}">${esc(label)}</span>${when}${r.message ? `<span class="hint">${esc(r.message)}</span>` : ""}</div></td>
+      </tr>`;
+  }).join("");
+  document.getElementById("scan-body").innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Device</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="hint check-foot">${res.dryRun ? "Preview only. Nothing was written." : "Each request is in data/audit.log."}</p>`;
 }
 
 boot();

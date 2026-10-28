@@ -68,6 +68,45 @@
           group are skipped. To use the source's group, mirror it on the <a href="/groups.html">Groups</a> page first.</p>
         <div id="membership-body"><div class="empty-state">Available once devices have moved.</div></div>
       </section>
+
+      <section class="panel-card" id="scan-card">
+        <div class="card-head">
+          <h2><span data-icon="search"></span>Scan arrived devices</h2>
+          <span id="scan-summary"></span>
+          <span class="spacer"></span>
+          <button id="scan-preview" class="btn btn-small" data-action="scan-preview">Preview</button>
+          <button id="scan-apply" class="btn btn-small btn-primary" data-action="scan-apply" disabled>Scan</button>
+        </div>
+        <p class="card-sub">Asks each device that has checked in to run a scan under the receiving tenant's policies.
+          Sophos only says a scan was requested; one that runs shows as an event on the device in Sophos Fusion. Many
+          devices scanning at once slows them down, servers especially.</p>
+        <div id="scan-body"><div class="empty-state">Available once devices have checked in.</div></div>
+      </section>
+
+      <section class="panel-card" id="tamper-card">
+        <div class="card-head">
+          <h2><span data-icon="lock"></span>Tamper protection</h2>
+          <span id="tamper-summary"></span>
+          <span class="spacer"></span>
+          <button id="tamper-preview" class="btn btn-small" data-action="tamper-preview">Preview</button>
+          <button id="tamper-apply" class="btn btn-small btn-primary" data-action="tamper-apply" disabled>Apply</button>
+        </div>
+        <p class="card-sub">A moved device takes the receiving tenant's tamper protection. This turns it on for devices
+          that have checked in, and makes each one a new password, so a password from before the move stops working.
+          It can't turn tamper protection on while it is off for the whole tenant. These choices are remembered for
+          this job in this browser.</p>
+        <div class="tamper-options">
+          <label class="checkbox"><input type="checkbox" id="tamper-turn-on" data-tamper-option checked /> Turn on where it is off</label>
+          <label class="checkbox"><input type="checkbox" id="tamper-new-passwords" data-tamper-option checked /> Make new passwords</label>
+          <label class="tamper-scope">Devices
+            <select id="tamper-scope" data-tamper-option>
+              <option value="all">All arrived devices</option>
+              <option value="was-on">Only those with it on at the source</option>
+            </select>
+          </label>
+        </div>
+        <div id="tamper-body"><div class="empty-state">Available once devices have checked in.</div></div>
+      </section>
     </div>
 
     <section class="panel-card monitor-upstream">

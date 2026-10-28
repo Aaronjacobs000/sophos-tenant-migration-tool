@@ -31,6 +31,19 @@ export interface EndpointGroupRef {
   name: string;
 }
 
+/** A device's tamper protection as its endpoint record showed it. */
+export interface TamperState {
+  /** tamperProtectionEnabled, or null when the record did not say. */
+  enabled: boolean | null;
+  /** tamperProtectionSupported: false (or null) on devices without it, such as Linux. */
+  supported: boolean | null;
+}
+
+/** Tamper protection on the receiving tenant, and when the tool read it. */
+export interface TamperReading extends TamperState {
+  readAt: string;
+}
+
 /**
  * Where a device is on the receiving tenant. Sophos hands a device over within
  * seconds, but the device only moves when it next checks in, under its new ID.
@@ -53,6 +66,8 @@ export interface DeviceCheckIn {
    * checked in yet. The check-in came after this and by checkedInAt.
    */
   stillWaitingAt?: string;
+  /** Tamper protection on the new record when the check found the device checked in. */
+  tamperProtection?: TamperReading;
 }
 
 /**
@@ -130,8 +145,20 @@ export interface LocalMigrationJob {
    * created (null for no group). Absent on jobs created before 0.2.0.
    */
   endpointGroups?: Record<string, EndpointGroupRef | null>;
+  /**
+   * Each device's tamper protection on the sending tenant when the job was
+   * created, from the pre-flight's reads. Absent on jobs created before 0.5.0.
+   */
+  endpointTamperProtection?: Record<string, TamperState>;
   /** Check-in on the receiving tenant, by the device's ID on the sending tenant. */
   checkIns?: Record<string, DeviceCheckIn>;
+  /**
+   * The latest read of each arrived device's tamper protection on the
+   * receiving tenant by a job page action (preview or run), by the device's ID
+   * on the sending tenant. The job check never writes it, so a check running
+   * at the same time can't undo it.
+   */
+  arrivalTamper?: Record<string, TamperReading>;
   /**
    * Notes from starting the job, shown on the job page: a trigger Sophos
    * answered unclearly that a read-back found started says so here.
