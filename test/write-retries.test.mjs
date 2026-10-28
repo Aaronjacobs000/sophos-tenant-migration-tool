@@ -525,7 +525,7 @@ test("the job page shows a job's start notes as an alert", async () => {
   assert.equal(shown.at(-1), "", "no alert without a note");
 });
 
-const TRIGGER_ADVICE = "Nothing was saved in this tool. The receiving job on Test Destination was left in place in case the move started, and expires by itself after 14 days. In a few minutes, open the Migrations page, which lists the jobs on both tenants: if job job-9 shows as sending, the move started; if not, start the move again.";
+const TRIGGER_ADVICE = "Nothing was saved in this tool. The receiving job on Test Destination was left in place in case the move started, and expires by itself 14 days after it was created. In a few minutes, open the Migrations page, which lists the jobs on both tenants: if job job-9 shows as sending, the move started; if not, start the move again.";
 
 test("device move: a trigger answered 500 that no read-back finds fails, leaves the receiving job, and says where it looked", async () => {
   senderKnowsJob = false;

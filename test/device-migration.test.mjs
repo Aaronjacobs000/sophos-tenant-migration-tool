@@ -20,7 +20,7 @@ fake.on(SRC, "GET", `/endpoint/v1/endpoints/${DEVICE}`, () => ({ body: { id: DEV
 const setting = { src: { enabled: true, expiresAt: "2099-01-01T00:00:00Z" }, dst: { enabled: true, expiresAt: "2099-01-01T00:00:00Z" } };
 fake.on(SRC, "GET", "/endpoint/v1/settings/migration", () => ({ body: setting.src }));
 fake.on(DST, "GET", "/endpoint/v1/settings/migration", () => ({ body: setting.dst }));
-fake.on(DST, "POST", "/endpoint/v1/migrations", () => ({ status: 201, body: { id: "job-1", token: "handshake", mode: "receiving" } }));
+fake.on(DST, "POST", "/endpoint/v1/migrations", () => ({ status: 201, body: { id: "job-1", token: "job-1-token", mode: "receiving" } }));
 fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => ({ body: { id: "job-1", mode: "sending" } }));
 
 const migrationWrites = () => fake.writes().filter((w) => w.path.startsWith("/endpoint/v1/migrations"));
@@ -117,9 +117,9 @@ test("the job page has no Cancel button and says a move can't be cancelled", asy
 
 // A trigger that fails with a clear answer: no DELETE (Sophos has none), and the error says the receiving job stays.
 const EXPIRES = "2026-11-12T03:04:05.678Z";
-const receiving = (extra = {}) => () => ({ status: 201, body: { id: "job-1", token: "handshake", mode: "receiving", createdAt: "2026-10-29T03:04:05.678Z", ...extra } });
+const receiving = (extra = {}) => () => ({ status: 201, body: { id: "job-1", token: "job-1-token", mode: "receiving", createdAt: "2026-10-29T03:04:05.678Z", ...extra } });
 const restoreJobRoutes = () => {
-  fake.on(DST, "POST", "/endpoint/v1/migrations", () => ({ status: 201, body: { id: "job-1", token: "handshake", mode: "receiving" } }));
+  fake.on(DST, "POST", "/endpoint/v1/migrations", () => ({ status: 201, body: { id: "job-1", token: "job-1-token", mode: "receiving" } }));
   fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", () => ({ body: { id: "job-1", mode: "sending" } }));
 };
 const deletes = () => fake.calls.filter((c) => c.method === "DELETE");
@@ -187,12 +187,73 @@ test("a trigger answered 500 keeps its own advice, with no DELETE and no 'did no
   try {
     fake.reset();
     const err = await startMigration({ jobName: "unclear trigger", endpointIds: [DEVICE] }).catch((e) => e);
-    assert.match(err.message, /left in place in case the move started, and expires by itself after 14 days/);
+    assert.match(err.message, /left in place in case the move started, and expires by itself 14 days after it was created\./);
     assert.doesNotMatch(err.message, /did not start/);
     assert.deepEqual(deletes(), []);
   } finally {
     setReadBackDelays([1000, 3000, 6000]);
     restoreJobRoutes();
+  }
+});
+
+test("a trigger with no clear answer, a 500 or a dropped connection, gives the receiving job's expiresAt", async () => {
+  const answers = {
+    "a 500": () => ({ status: 500, body: { error: "InternalError" } }),
+    "a dropped connection": () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); },
+  };
+  fake.on(SRC, "GET", "/endpoint/v1/migrations/job-1", () => ({ status: 404, body: { error: "NotFound", message: "no such job" } }));
+  fake.on(DST, "POST", "/endpoint/v1/migrations", receiving({ expiresAt: EXPIRES }));
+  const { setReadBackDelays } = await import("../backend/dist/services/write-check.js");
+  setReadBackDelays([0, 0, 0]);
+  try {
+    for (const [what, answer] of Object.entries(answers)) {
+      fake.on(SRC, "PUT", "/endpoint/v1/migrations/job-1", answer);
+      fake.reset();
+      const err = await startMigration({ jobName: "unclear trigger", endpointIds: [DEVICE] }).catch((e) => e);
+      assert.ok(err.message.includes("The receiving job on Test Destination was left in place in case the move started, and expires by itself on 2026-11-12 03:04 UTC. In a few minutes, open the Migrations page"), `${what}: ${err.message}`);
+      assert.doesNotMatch(err.message, /14 days|did not start/, what);
+      assert.deepEqual(migrationWrites().map((w) => `${w.tenant} ${w.method}`), ["dst POST", "src PUT"], what);
+      assert.deepEqual(deletes(), [], what);
+    }
+  } finally {
+    setReadBackDelays([1000, 3000, 6000]);
+    restoreJobRoutes();
+  }
+});
+
+// A receiving job that comes back with no handshake token can't be triggered, and Sophos has no DELETE, so it stays.
+test("a receiving job with no handshake token sends no trigger and no DELETE, and says the job stays until it expires", async () => {
+  try {
+    for (const [extra, when] of [[{ expiresAt: EXPIRES }, "on 2026-11-12 03:04 UTC"], [{}, "14 days after it was created"]]) {
+      fake.on(DST, "POST", "/endpoint/v1/migrations", receiving({ token: undefined, ...extra }));
+      fake.reset();
+      const err = await startMigration({ jobName: "no token", endpointIds: [DEVICE] }).catch((e) => e);
+      assert.ok(err instanceof Error);
+      assert.equal(err.message, `Receiver job did not return a handshake token. ${LEFT} ${when}, because the Sophos API cannot delete a migration job.`);
+      assert.deepEqual(migrationWrites().map((w) => `${w.tenant} ${w.method}`), ["dst POST"], "no trigger is sent");
+      assert.deepEqual(deletes(), []);
+    }
+  } finally {
+    restoreJobRoutes();
+  }
+});
+
+test("the start route gives the page the no-token note as it is", async () => {
+  const { startHttp } = await import("./helpers/http.mjs");
+  const http = await startHttp([migrateDevicesRouter]);
+  fake.on(DST, "POST", "/endpoint/v1/migrations", receiving({ token: undefined, expiresAt: EXPIRES }));
+  try {
+    fake.reset();
+    const res = await http.post("/api/migrate/devices", { jobName: "no token", endpointIds: [DEVICE] });
+    assert.equal(res.status, 500);
+    assert.equal(res.body.message, `Receiver job did not return a handshake token. ${LEFT} on 2026-11-12 03:04 UTC, because the Sophos API cannot delete a migration job.`);
+    const js = await readFile(new URL("../frontend/js/page-migrate.js", import.meta.url), "utf8");
+    const hint = new Function(`${js.slice(js.indexOf("function migrationErrorHint"), js.indexOf("boot();"))}; return migrationErrorHint;`)();
+    assert.equal(hint({ message: res.body.message, body: res.body }, "x"), res.body.message);
+    assert.deepEqual(deletes(), []);
+  } finally {
+    restoreJobRoutes();
+    await http.close();
   }
 });
 
@@ -234,4 +295,42 @@ test("a move of exactly 1000 devices goes ahead", async () => {
   const res = await startMigration({ jobName: "at the limit", endpointIds: many(1000), dryRun: true });
   assert.equal(res.deviceLimitFailure, undefined);
   assert.equal(res.plan.receiverBody.endpoints.length, 1000);
+});
+
+// The same device listed more than once is read, counted and sent once.
+const MAC = "abcdef01-2345-4678-89ab-cdef01234567";
+fake.on(SRC, "GET", `/endpoint/v1/endpoints/${MAC}`, () => ({ body: { id: MAC, hostname: "MAC1", type: "computer", lastSeenAt: recent } }));
+
+test("a device listed more than once is read once and sent once", async () => {
+  fake.reset();
+  const res = await startMigration({ jobName: "repeats", endpointIds: [DEVICE, MAC, DEVICE, `source::${DEVICE}`, MAC.toUpperCase(), ` ${MAC} `] });
+  assert.ok(res.job);
+  assert.deepEqual(res.job.endpointIds, [DEVICE, MAC]);
+  const reads = fake.calls.filter((c) => c.kind === "tenant" && c.method === "GET" && c.path.startsWith("/endpoint/v1/endpoints/"));
+  assert.deepEqual(reads.map((c) => c.path.split("/").pop()), [DEVICE, MAC], "each device is read once");
+  const writes = migrationWrites();
+  assert.deepEqual(writes.map((w) => `${w.tenant} ${w.method}`), ["dst POST", "src PUT"]);
+  assert.deepEqual(writes[0].body.endpoints, [DEVICE, MAC]);
+  assert.deepEqual(writes[1].body.endpoints, [DEVICE, MAC]);
+});
+
+test("repeats do not count towards the 1000 limit, and the limit message counts each device once", async () => {
+  fake.reset();
+  const atLimit = await startMigration({ jobName: "repeats at the limit", endpointIds: [...many(1000), ...many(200)], dryRun: true });
+  assert.equal(atLimit.deviceLimitFailure, undefined);
+  assert.equal(atLimit.plan.receiverBody.endpoints.length, 1000);
+  assert.equal(atLimit.plan.senderTrigger.endpoints.length, 1000);
+
+  const { startHttp } = await import("./helpers/http.mjs");
+  const http = await startHttp([migrateDevicesRouter]);
+  try {
+    fake.reset();
+    const res = await http.post("/api/migrate/devices", { jobName: "repeats over the limit", endpointIds: [...many(1001), ...many(1001)] });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "too_many_devices");
+    assert.equal(res.body.message, "1001 devices are selected, and Sophos accepts at most 1000 in one migration job through its API, so nothing was sent. Start a move for each batch of 1000 or fewer.");
+    assert.deepEqual(fake.calls.filter((c) => c.kind === "tenant"), [], "no call to either tenant");
+  } finally {
+    await http.close();
+  }
 });
