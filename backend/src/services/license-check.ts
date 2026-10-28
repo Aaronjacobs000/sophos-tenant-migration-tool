@@ -17,7 +17,7 @@ import { getEndpoint } from "../sophos/api/endpoints.js";
 import { getSectionData } from "./preloader.js";
 import type { TenantLabel } from "../sophos/tenant-context.js";
 import type { SophosEndpoint } from "../sophos/types/sophos.js";
-import type { MigrationDirection } from "./device-migrator.js";
+import { uniqueDeviceIds, type MigrationDirection } from "./device-migrator.js";
 
 export type DeviceClass = "computer" | "server";
 export type Family = "computer" | "server" | "xdr" | "mdr" | "encryption";
@@ -203,8 +203,9 @@ export async function checkLicenses(req: {
   const from = requireContext(sendingSide);
   const to = requireContext(receivingSide);
 
+  // A device listed more than once is read and counted once, as in a move.
   const [selected, sendingRes, receivingRes] = await Promise.all([
-    countSelected(sendingSide, req.endpointIds),
+    countSelected(sendingSide, uniqueDeviceIds(req.endpointIds)),
     settle(listLicenses(from.client, from.tenantId)),
     settle(listLicenses(to.client, to.tenantId)),
   ]);

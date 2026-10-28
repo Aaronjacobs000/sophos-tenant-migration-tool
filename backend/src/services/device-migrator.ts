@@ -132,15 +132,8 @@ export async function startMigration(
       `${invalidIds.length} endpoint ID(s) are not valid UUIDs: ${invalidIds.slice(0, 3).join(", ")}${invalidIds.length > 3 ? "…" : ""}`,
     );
   }
-  // A device listed more than once is read, counted and sent once. UUIDs
-  // ignore case, so IDs that differ only in case are the same device.
-  const seen = new Set<string>();
-  const uniqueIds = cleanIds.filter((id) => {
-    const key = id.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // A device listed more than once is read, counted and sent once.
+  const uniqueIds = uniqueDeviceIds(cleanIds);
   // Replace req.endpointIds with the cleaned version
   req.endpointIds = uniqueIds;
 
@@ -249,20 +242,23 @@ export async function startMigration(
     detail: { response: receiver },
   });
   const handshakeToken = (receiver as any).token ?? receiver.fromToken;
+  if (handshakeToken) registerSecret(handshakeToken);
+  // A job Sophos created is audited whether or not it came with a token.
+  if (handshakeToken || receiver.id) {
+    await auditOrWarn({
+      side: to.label,
+      tenantId: to.tenantId,
+      action: "create",
+      resource: "migration-receiver",
+      resourceId: receiver.id,
+      ok: true,
+      detail: { jobName: req.jobName, direction },
+    });
+  }
   if (!handshakeToken) {
     // No trigger can be sent, and the job cannot be deleted, so it stays.
     throw receivingJobLeft(new Error("Receiver job did not return a handshake token"), receiver, tenantOf(to).name);
   }
-  registerSecret(handshakeToken);
-  await auditOrWarn({
-    side: to.label,
-    tenantId: to.tenantId,
-    action: "create",
-    resource: "migration-receiver",
-    resourceId: receiver.id,
-    ok: true,
-    detail: { jobName: req.jobName, direction },
-  });
 
   // Step 3: PUT sender trigger on the source tenant.
   // Uses the SAME job ID from the receiver. Body is just { token, endpoints }.
@@ -406,6 +402,20 @@ function expiryOf(receiver: SophosMigrationJob): string {
   return Number.isFinite(expiresAt)
     ? `on ${formatDate(new Date(expiresAt))}`
     : `${JOB_LIFETIME_MS / 86_400_000} days after it was created`;
+}
+
+/**
+ * Each device once, in the order first listed. UUIDs ignore case, so IDs that
+ * differ only in case are the same device, and the first spelling is kept.
+ */
+export function uniqueDeviceIds(ids: string[]): string[] {
+  const seen = new Set<string>();
+  return ids.filter((id) => {
+    const key = id.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 const inFlight = new Map<string, Promise<LocalMigrationJob | null>>();

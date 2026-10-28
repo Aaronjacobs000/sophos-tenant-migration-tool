@@ -257,6 +257,35 @@ test("the start route gives the page the no-token note as it is", async () => {
   }
 });
 
+test("a receiving job with no handshake token is audited as created, the same as one with a token, and the error still comes", async () => {
+  const { startHttp } = await import("./helpers/http.mjs");
+  const http = await startHttp([migrateDevicesRouter]);
+  const start = async () => {
+    const before = (await readAudit(root)).length;
+    fake.reset();
+    const res = await http.post("/api/migrate/devices", { jobName: "audited", endpointIds: [DEVICE] });
+    return { res, added: (await readAudit(root)).slice(before) };
+  };
+  const shape = ({ id, ts, ...entry }) => entry;
+  try {
+    const withToken = await start();
+    assert.equal(withToken.res.status, 201);
+    const expected = { side: "dest", tenantId: DST.tenantId, action: "create", resource: "migration-receiver", resourceId: "job-1", ok: true, detail: { jobName: "audited", direction: "source-to-dest" } };
+    assert.deepEqual(shape(withToken.added.find((e) => e.resource === "migration-receiver")), expected);
+    assert.doesNotMatch(JSON.stringify(withToken.added), /job-1-token/, "the audit log holds no token");
+
+    fake.on(DST, "POST", "/endpoint/v1/migrations", receiving({ token: undefined, expiresAt: EXPIRES }));
+    const noToken = await start();
+    assert.equal(noToken.res.status, 500);
+    assert.equal(noToken.res.body.message, `Receiver job did not return a handshake token. ${LEFT} on 2026-11-12 03:04 UTC, because the Sophos API cannot delete a migration job.`);
+    assert.deepEqual(noToken.added.map(shape), [expected]);
+    assert.deepEqual(migrationWrites().map((w) => `${w.tenant} ${w.method}`), ["dst POST"], "no trigger is sent");
+  } finally {
+    restoreJobRoutes();
+    await http.close();
+  }
+});
+
 // The API reference: the POST and PUT bodies' endpoints "Must contain 1-1000 items".
 const many = (n) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-1${String(i).padStart(11, "0")}`);
 fake.on(SRC, "GET", /^\/endpoint\/v1\/endpoints\/00000000-0000-4000-8000-1\d{11}$/, (req) => ({ body: { id: req.path.split("/").pop(), hostname: "BULK", type: "computer", lastSeenAt: recent } }));
