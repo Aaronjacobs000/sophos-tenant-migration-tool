@@ -106,12 +106,14 @@ test("HOST defaults to 127.0.0.1 and takes only an IP address", () => {
   assert.throws(() => networkSettings({ HOST: "0.0.0.0", ALLOWED_IPS: "lan" }), /ALLOWED_IPS/);
 });
 
-test("a credentials save rewrites .env and HOST and ALLOWED_IPS still read back the same", async () => {
-  const { mkdtemp, writeFile, readFile: read } = await import("node:fs/promises");
+test("a credentials save rewrites .env and HOST and ALLOWED_IPS still read back the same", async (t) => {
+  const { mkdtemp, writeFile, readFile: read, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const dotenv = (await import("dotenv")).default;
   const { readEnvFile, setEnvValues, writeEnvFile } = await import("../backend/dist/config/env-file.js");
-  const file = path.join(await mkdtemp(path.join(tmpdir(), "stmt-net-")), ".env");
+  const dir = await mkdtemp(path.join(tmpdir(), "stmt-net-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, ".env");
   await writeFile(file, "HOST=::\nALLOWED_IPS=192.168.1.0/24, fd7a:115c:a1e0::/48,100.64.0.0/10\nCREDENTIAL_MODE=direct\n");
   await writeEnvFile(setEnvValues(await readEnvFile(file), { SOPHOS_SOURCE_LABEL: "Saved by the wizard" }));
   const settings = networkSettings(dotenv.parse(await read(file, "utf8")));
@@ -241,13 +243,15 @@ test("server.ts checks the client before the host check, the body parser and eve
 
 // The real server, from a copy with no .env, so it starts unconfigured and never reads this
 // checkout's settings. fetch is replaced before it loads, so nothing can reach a tenant.
-test("a HOST that isn't this computer's, a busy port and any other listen error stop the server with one line and exit code 1", async () => {
-  const { mkdtemp, cp, symlink, writeFile } = await import("node:fs/promises");
+test("a HOST that isn't this computer's, a busy port and any other listen error stop the server with one line and exit code 1", async (t) => {
+  const { mkdtemp, cp, symlink, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const net = (await import("node:net")).default;
   const { spawn } = await import("node:child_process");
   const { pathToFileURL } = await import("node:url");
   const root = await mkdtemp(path.join(tmpdir(), "stmt-listen-"));
+  // Removes the node_modules link, not what it points at.
+  t.after(() => rm(root, { recursive: true, force: true }));
   await cp(path.join(process.cwd(), "backend/dist"), path.join(root, "backend/dist"), { recursive: true });
   await symlink(path.join(process.cwd(), "node_modules"), path.join(root, "node_modules"), "dir");
   const noFetch = path.join(root, "no-fetch.mjs");

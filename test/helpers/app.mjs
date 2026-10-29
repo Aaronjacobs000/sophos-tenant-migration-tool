@@ -1,7 +1,8 @@
 // Boots the compiled backend state against the fake Sophos in a temp repo
 // root, so services run exactly as they do in the app.
 
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { after } from "node:test";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SRC, DST } from "./fake-sophos.mjs";
@@ -12,6 +13,8 @@ export async function bootApp(fake) {
   for (const k of ["log", "warn", "error"]) console[k] = () => {};
 
   const root = await mkdtemp(path.join(tmpdir(), "stmt-test-"));
+  // Removed once the file's tests have run, so runs don't pile up temp folders.
+  after(() => rm(root, { recursive: true, force: true, maxRetries: 3 }));
   // Job credentials are encrypted with a key kept outside the repo; keep the tests' key in the temp root.
   process.env.JOB_CREDENTIALS_KEY_FILE = path.join(root, "key", "job-credentials.key");
   await writeFile(
