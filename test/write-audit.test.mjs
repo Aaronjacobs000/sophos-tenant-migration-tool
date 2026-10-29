@@ -126,6 +126,7 @@ const LOCAL = {
   "POST /preload/refresh/:section/:side": ["post", "/api/preload/refresh/policies/dest", {}],
   "POST /checks/licenses": ["post", "/api/checks/licenses", { endpointIds: [DEVICE] }],
   "POST /checks/tamper-protection": ["post", "/api/checks/tamper-protection", { endpointIds: [DEVICE] }],
+  "POST /checks/known-issues": ["post", "/api/checks/known-issues", { endpointIds: [DEVICE] }],
   "POST /migrate/devices/jobs/:id/credentials": ["post", "/api/migrate/devices/jobs/local-1/credentials", { use: "current" }, seedJob],
   "POST /migrate/devices/jobs/:id/credentials/remove": ["post", "/api/migrate/devices/jobs/local-1/credentials/remove", {}, seedJob],
 };
