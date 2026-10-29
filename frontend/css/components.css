@@ -754,6 +754,10 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
   .page-main { padding: 20px 16px 48px; }
   .topbar { padding: 0 16px; }
   .route-side { max-width: 160px; }
+  /* Web filtering: a wide table scrolls inside its card, not the page. */
+  .table-wrap-narrow { overflow-x: auto; }
+  /* The scroll box would cut off the last row's menu, so make room under the table while it is open. */
+  .table-wrap-narrow:has(tbody tr:last-child .row-menu-list:not(.hidden)) { padding-bottom: 52px; }
 }
 
 /* ================= dashboard ================= */
@@ -941,7 +945,7 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 .plan-n .ico { width: 12px; height: 12px; color: var(--bad); }
 .plan-step strong { display: block; font-size: 13px; }
 .plan-step p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
-.plan-step code { font-size: 11px; }
+.plan-step code { font-size: 11px; overflow-wrap: anywhere; }
 
 /* ================= migrations ================= */
 .jobs-table .job-progress { min-width: 170px; }
@@ -962,7 +966,7 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 .data-table tr.has-error td { background: color-mix(in oklab, var(--bad) 5%, transparent); }
 .ep-error { color: #ffc2c8; font-size: 12px; }
 @media (max-width: 1180px) {
-  .migrate-grid { grid-template-columns: 1fr; }
+  .migrate-grid { grid-template-columns: minmax(0, 1fr); }
   .meta-inline { grid-template-columns: auto 1fr; }
 }
 #job-warnings .banner { margin: 0 0 12px; }
@@ -1203,6 +1207,7 @@ body.is-wall #wall-btn:hover { opacity: 1; }
   .lane-link { margin: 0 4px; }
   .lane-mark { display: none; }
   .lane-end { display: none; }
+  .api-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Migrations list */

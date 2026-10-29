@@ -218,7 +218,7 @@ async function renderSelection(ids, direction) {
       }
     }
     const rows = details
-      .map((d) => `<li><span class="sel-host">${escapeHtml(d.hostname)}</span><code class="sel-id">${escapeHtml(d.id)}</code></li>`)
+      .map((d) => `<li><span class="sel-host">${escapeHtml(d.hostname)}</span><code class="sel-id" title="${escapeHtml(d.id)}">${escapeHtml(d.id)}</code></li>`)
       .join("");
     const more = ids.length > 30 ? `<p class="hint">And ${ids.length - 30} more.</p>` : "";
     list.innerHTML += `<ul class="sel-list">${rows}</ul>${more}`;
