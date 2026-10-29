@@ -61,27 +61,36 @@ function wireDrawer() {
 }
 
 async function loadStatus() {
-  let preload;
-  try {
-    [tenantStatus, preload] = await Promise.all([
-      api.get("/api/status"),
-      getPreloadStatus(),
-    ]);
-  } catch (err) {
-    document.getElementById("preload-grid").innerHTML =
-      `<div class="banner banner-err">${esc(err.message || "Failed to load preload status")}</div>`;
+  // Each is read on its own: when Sophos refuses a tenant's credentials, the
+  // tenant status still says so while the preload status answers 503.
+  const [status, preload] = await Promise.allSettled([api.get("/api/status"), getPreloadStatus()]);
+  if (status.status === "fulfilled") {
+    tenantStatus = status.value;
+    renderHero(tenantStatus);
+    renderTenantDetails(tenantStatus);
+    renderJourney(journeyData);
+  }
+  if (status.status === "rejected" || preload.status === "rejected") {
+    const err = status.status === "rejected" ? status.reason : preload.reason;
+    document.getElementById("preload-grid").innerHTML = `<div class="banner banner-err">${notLoaded(err)}</div>`;
     return true;
   }
 
-  renderHero(tenantStatus);
-  renderTenantDetails(tenantStatus);
-  renderJourney(journeyData);
-  renderPreloadGrid(preload);
+  const loaded = preload.value;
+  renderPreloadGrid(loaded);
 
   const stillLoading = ["source", "dest"].some((side) =>
-    SECTIONS.some((s) => preload[side][s.id]?.state === "loading"),
+    SECTIONS.some((s) => loaded[side][s.id]?.state === "loading"),
   );
   return !stillLoading;
+}
+
+/** Why nothing loaded: each tenant that isn't connected and the reason it gave, or the error. */
+function notLoaded(err) {
+  const down = [["Source", tenantStatus?.source], ["Destination", tenantStatus?.dest]].filter(([, side]) => side && !side.ok);
+  if (!down.length) return esc(err?.message || "Failed to load preload status");
+  const why = down.map(([name, side]) => `${name} not connected: ${esc(side.error || (side.configured ? "no answer from Sophos" : "no credentials"))}`);
+  return `${why.join(". ")}. Nothing loads until both tenants are connected. <a href="/credentials.html">Update credentials</a>`;
 }
 
 // ---------- hero ----------
@@ -232,8 +241,12 @@ function renderJourney(data) {
     ],
   };
 
+  // A tenant that isn't connected loads nothing, so the steps that compare the two don't wait for it.
+  const notConnected = { state: "muted", tag: "Not loaded", lines: ["Needs both tenants connected."] };
   let config;
-  if (!data) {
+  if (tenantStatus && connected < 2) {
+    config = { ...notConnected };
+  } else if (!data) {
     config = { state: "loading", tag: "Waiting", lines: ["Counts appear once both tenants have loaded."] };
   } else {
     const lines = [];
@@ -266,7 +279,9 @@ function renderJourney(data) {
   Object.assign(config, { n: 2, title: "Configuration", icon: "sliders", href: "/policies.html", cta: "Policies" });
 
   let devices;
-  if (!data || !data.epS) {
+  if (tenantStatus && connected < 2) {
+    devices = { ...notConnected };
+  } else if (!data || !data.epS) {
     devices = { state: "loading", tag: "Waiting", lines: ["Device counts appear once endpoints have loaded."] };
   } else {
     const stale = data.epS.filter(isStale).length;

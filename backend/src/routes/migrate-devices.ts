@@ -10,6 +10,10 @@
  *   POST   /api/migrate/devices/jobs/:id/group-membership  put moved devices
  *          back into same-named groups ({ dryRun: true } or { dryRun: false }),
  *          or the groups picked in choices ({ [endpointId]: groupId or null })
+ *   POST   /api/migrate/devices/jobs/:id/tamper-protection  turn tamper
+ *          protection on and make new passwords on arrived devices
+ *          ({ dryRun, turnOn, newPasswords, scope: "all" or "was-on" })
+ *   POST   /api/migrate/devices/jobs/:id/scan             scan arrived devices ({ dryRun })
  *
  * Jobs are checked with their own tenants and stored credentials
  * (services/job-access.ts), so only starting a job needs the tool's current
@@ -17,7 +21,7 @@
  * references.
  */
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { requireConfigured } from "../middleware/require-configured.js";
 import { jsonOnly } from "../middleware/json-body.js";
 import {
@@ -26,6 +30,7 @@ import {
 } from "../services/device-migrator.js";
 import { listJobs, getJob } from "../services/migration-store.js";
 import { restoreGroupMembership, JobNotFoundError } from "../services/group-membership.js";
+import { scanArrivedDevices, tamperProtectionAction } from "../services/arrival-actions.js";
 import { attachCredentials, removeCredentials, nameUnnamedTenants, AttachError, JobAccessError } from "../services/job-access.js";
 import { nextCheckDelayMs } from "../services/job-progress.js";
 import { publicJob, type PublicJob } from "../services/job-view.js";
@@ -283,6 +288,59 @@ migrateDevicesRouter.post("/migrate/devices/jobs/:id/group-membership", jsonOnly
       return;
     }
     next(err);
+  }
+});
+
+/** The answer for a job that isn't there, or whose tenants can't be reached, from an action route. */
+function actionError(err: unknown, res: Response): boolean {
+  if (err instanceof JobNotFoundError) {
+    res.status(404).json({ error: "not_found", message: err.message });
+    return true;
+  }
+  if (err instanceof JobAccessError) {
+    res.status(409).json({ error: `job_${err.problem}`, message: maskSecrets(err.message) });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Tamper protection on the devices that have arrived. As with group
+ * membership, dryRun must be stated in JSON, and so must each option, so a
+ * post from another site, or one that leaves them out, changes nothing.
+ */
+migrateDevicesRouter.post("/migrate/devices/jobs/:id/tamper-protection", jsonOnly, async (req, res, next) => {
+  try {
+    const b = req.body ?? {};
+    if (typeof b.dryRun !== "boolean" || typeof b.turnOn !== "boolean" || typeof b.newPasswords !== "boolean") {
+      res.status(400).json({ error: "bad_request", message: "dryRun, turnOn and newPasswords (true or false) are required" });
+      return;
+    }
+    if (!b.turnOn && !b.newPasswords) {
+      res.status(400).json({ error: "bad_request", message: "turnOn or newPasswords must be true" });
+      return;
+    }
+    const scope = b.scope ?? "all";
+    if (scope !== "all" && scope !== "was-on") {
+      res.status(400).json({ error: "bad_request", message: 'scope must be "all" or "was-on"' });
+      return;
+    }
+    res.json(await tamperProtectionAction(req.params.id!, { dryRun: b.dryRun, turnOn: b.turnOn, newPasswords: b.newPasswords, scope }));
+  } catch (err) {
+    if (!actionError(err, res)) next(err);
+  }
+});
+
+/** A scan on the devices that have arrived. dryRun must be stated in JSON. */
+migrateDevicesRouter.post("/migrate/devices/jobs/:id/scan", jsonOnly, async (req, res, next) => {
+  try {
+    if (typeof req.body?.dryRun !== "boolean") {
+      res.status(400).json({ error: "bad_request", message: "dryRun (true or false) is required" });
+      return;
+    }
+    res.json(await scanArrivedDevices(req.params.id!, { dryRun: req.body.dryRun }));
+  } catch (err) {
+    if (!actionError(err, res)) next(err);
   }
 });
 

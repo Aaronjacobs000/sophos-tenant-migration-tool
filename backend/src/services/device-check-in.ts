@@ -21,7 +21,7 @@
 import type { TenantContext } from "../sophos/tenant-context.js";
 import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import type { MigrationEndpointStatus } from "../sophos/api/migrations.js";
-import type { DeviceCheckIn, LocalMigrationJob } from "./migration-store.js";
+import type { DeviceCheckIn, LocalMigrationJob, TamperReading } from "./migration-store.js";
 
 /** A receiving-tenant endpoint record, as far as check-in needs it. */
 export interface ReceivedRecord {
@@ -29,6 +29,20 @@ export interface ReceivedRecord {
   hostname?: string;
   lastSeenAt?: string;
   registeredAt?: string;
+  tamperProtectionEnabled?: boolean;
+  tamperProtectionSupported?: boolean | null;
+}
+
+/**
+ * A record's tamper protection, as read at `readAt`. Linux has none: Sophos
+ * says false, or null. A record that leaves the field out is unknown.
+ */
+export function tamperReading(record: Pick<ReceivedRecord, "tamperProtectionEnabled" | "tamperProtectionSupported">, readAt: string): TamperReading {
+  return {
+    enabled: typeof record.tamperProtectionEnabled === "boolean" ? record.tamperProtectionEnabled : null,
+    supported: record.tamperProtectionSupported === undefined ? null : record.tamperProtectionSupported === true,
+    readAt,
+  };
 }
 
 /**
@@ -79,7 +93,17 @@ export function checkInFor(
     // Read, and not checked in yet: the check-in comes after this read.
     return readAt ? { ...waiting, stillWaitingAt: readAt } : waiting;
   }
-  return { state: "checked-in", newId, handedOverAt, checkedInAt: record.lastSeenAt, ...(stillWaitingAt ? { stillWaitingAt } : {}) };
+  return {
+    state: "checked-in",
+    newId,
+    handedOverAt,
+    checkedInAt: record.lastSeenAt,
+    ...(stillWaitingAt ? { stillWaitingAt } : {}),
+    // The receiving tenant's tamper protection on the device as it arrived, when the record says.
+    ...(record.tamperProtectionEnabled !== undefined || record.tamperProtectionSupported !== undefined
+      ? { tamperProtection: tamperReading(record, readAt ?? record.lastSeenAt) }
+      : {}),
+  };
 }
 
 /**

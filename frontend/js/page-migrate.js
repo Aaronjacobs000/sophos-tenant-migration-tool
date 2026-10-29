@@ -19,8 +19,10 @@ async function boot() {
 
   loadWindow(direction);
   loadLicenses(ids, direction);
+  loadTamper(ids, direction);
   document.getElementById("window-recheck").addEventListener("click", () => loadWindow(direction));
   document.getElementById("license-recheck").addEventListener("click", () => loadLicenses(ids, direction));
+  document.getElementById("tamper-recheck").addEventListener("click", () => loadTamper(ids, direction));
 }
 
 // ---------- pre-flight: Device Migration setting (read only) ----------
@@ -130,6 +132,63 @@ function renderLicenses(res) {
     <p class="hint check-foot">Product names map loosely to features, so this check warns and never blocks.</p>`;
 }
 
+// ---------- tamper protection (read only) ----------
+
+async function loadTamper(ids, direction) {
+  const body = document.getElementById("tamper-body");
+  document.getElementById("tamper-summary").innerHTML = "";
+  body.innerHTML = `<p class="hint"><span class="spin"></span> Reading tamper protection on both tenants</p>`;
+  try {
+    const res = await api.post("/api/checks/tamper-protection", { endpointIds: ids, direction });
+    renderTamper(res);
+  } catch (err) {
+    body.innerHTML = `<div class="banner banner-err">${escapeHtml(err.message || "Check failed")}</div>`;
+  }
+}
+
+/**
+ * The receiving tenant's global setting decides whether moved devices arrive
+ * with tamper protection, so it is the headline; then how many selected
+ * devices have it on now.
+ */
+function renderTamper(res) {
+  const r = res.receiving;
+  const tone = r.enabled === true ? "ok" : "warn";
+  const label = r.enabled === true ? "On" : r.enabled === false ? "Off" : "Unknown";
+  document.getElementById("tamper-summary").innerHTML = res.warnings.length
+    ? `<span class="tag tag-warn">${res.warnings.length} to check</span>`
+    : `<span class="tag tag-ok">Arrives on</span>`;
+  const sel = res.selected;
+  const counted = sel.on + sel.off;
+  const selLine = `${sel.on} of ${counted} selected device${counted === 1 ? "" : "s"} with tamper protection ${counted === 1 ? "has" : "have"} it on now` +
+    `${sel.unsupported ? `. ${sel.unsupported} ${sel.unsupported === 1 ? "has" : "have"} none, as on Linux` : ""}.`;
+  const lead = r.enabled === true
+    ? "Moved devices take this tenant's tamper protection, so they arrive with it on."
+    : r.enabled === false
+      ? "Moved devices take this tenant's tamper protection, so they arrive without it."
+      : "The setting could not be read.";
+  const setting = (c) => (c.enabled === true ? "on" : c.enabled === false ? "off" : "unknown");
+  const warnings = res.warnings.length
+    ? `<ul class="check-warnings">${res.warnings.map((w) => `<li>${icon("alert")}<span>${escapeHtml(w)}</span></li>`).join("")}</ul>`
+    : "";
+  document.getElementById("tamper-body").innerHTML = `
+    <div class="check-main" data-tone="${tone}">
+      <span class="conn-dot" data-state="${tone === "ok" ? "ok" : "warn"}"></span>
+      <div>
+        <div class="check-title">Receiving tenant${r.tenantName ? `, ${escapeHtml(r.tenantName)}` : ""} <span class="tag tag-${tone}">${label}</span></div>
+        <p>${escapeHtml(lead)}</p>
+        ${r.error ? `<p class="ep-error">${escapeHtml(r.error)}</p>` : ""}
+      </div>
+    </div>
+    <p class="hint">${escapeHtml(selLine)}</p>
+    ${warnings}
+    <dl class="kv-list check-kv">
+      <dt>Sending tenant</dt><dd>${escapeHtml(res.sending.tenantName || res.sending.side)}: ${setting(res.sending)}</dd>
+      <dt>Checked</dt><dd>${escapeHtml(new Date(res.checkedAt).toLocaleTimeString())}</dd>
+    </dl>
+    <p class="hint check-foot">You don't need to turn off tamper protection to move devices. After the move, the job page can turn it on and make new passwords.</p>`;
+}
+
 function loadSelection() {
   try {
     return JSON.parse(sessionStorage.getItem("endpointSelection") || "[]");
@@ -159,7 +218,7 @@ async function renderSelection(ids, direction) {
       }
     }
     const rows = details
-      .map((d) => `<li><span class="sel-host">${escapeHtml(d.hostname)}</span><code class="sel-id">${escapeHtml(d.id)}</code></li>`)
+      .map((d) => `<li><span class="sel-host">${escapeHtml(d.hostname)}</span><code class="sel-id" title="${escapeHtml(d.id)}">${escapeHtml(d.id)}</code></li>`)
       .join("");
     const more = ids.length > 30 ? `<p class="hint">And ${ids.length - 30} more.</p>` : "";
     list.innerHTML += `<ul class="sel-list">${rows}</ul>${more}`;
@@ -257,6 +316,13 @@ function showPlan(plan, dir) {
     steps.push({
       title: "Group membership recorded",
       body: `${named ? `Groups: ${named}.` : "None of the devices is in a group."}${plan.ungrouped && named ? ` ${plan.ungrouped} device${plan.ungrouped === 1 ? " is" : "s are"} in no group.` : ""} After the move, the job page can add each device to the destination group with the same name.`,
+    });
+  }
+  if (plan.tamperProtection) {
+    const t = plan.tamperProtection;
+    steps.push({
+      title: "Tamper protection recorded",
+      body: `${t.on} device${t.on === 1 ? " has" : "s have"} it on and ${t.off} off${t.unsupported ? `; ${t.unsupported} ${t.unsupported === 1 ? "has" : "have"} none` : ""}. A moved device takes the receiving tenant's setting. The job page flags a device that had it on and arrives without it.`,
     });
   }
   document.getElementById("result-area").innerHTML = `

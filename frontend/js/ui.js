@@ -100,6 +100,7 @@ const OUTCOME = {
   "would-create": `<span class="tag tag-accent">would create</span>`,
   "would-update": `<span class="tag tag-accent">would update</span>`,
   skipped: `<span class="tag tag-muted">already there</span>`,
+  differs: `<span class="tag tag-warn">differs</span>`,
   failed: `<span class="tag tag-bad">failed</span>`,
   added: `<span class="tag tag-ok">added</span>`,
   "would-add": `<span class="tag tag-accent">would add</span>`,
@@ -117,11 +118,12 @@ export function outcomeOf(r) {
 }
 
 /**
- * A result's notes for the results list: settings changed to fit, anything
- * else the copy noted, then a policy's assignments, one line each.
+ * A result's notes for the results list: what differs from a same-name item
+ * on the destination, settings changed to fit, anything else the copy noted,
+ * then a policy's assignments, one line each.
  */
 export function notesOf(r) {
-  return [...(r.adjustments ?? []), ...(r.notes ?? []), ...assignmentNotes(r)];
+  return [...(r.differences ?? []).map((d) => `differs: ${d}`), ...(r.adjustments ?? []), ...(r.notes ?? []), ...assignmentNotes(r)];
 }
 
 const ASSIGNEE = { user: "user", userGroup: "user group", endpoint: "device", endpointGroup: "device group" };

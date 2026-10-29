@@ -87,7 +87,7 @@ function renderTable(side) {
           <span class="ep-host-inner"><span class="os-icon" title="${escAttr(os || "Unknown OS")}">${osIcon(ep)}</span><strong>${esc(ep.hostname || "")}</strong>${serverTag}${person ? `<span class="ep-person">${esc(person)}</span>` : ""}</span>
         </td>
         <td class="ep-health">${healthTag(ep.health?.overall)}</td>
-        <td class="ep-ip col-ip"><span class="hint">${esc(ips)}</span></td>
+        <td class="ep-ip col-ip" title="${escAttr(ips)}"><span class="hint">${esc(ips)}</span></td>
         <td class="ep-seen">${seen}</td>
         <td class="col-actions"><button class="icon-btn" data-detail='${escAttr(JSON.stringify(ep))}' title="Details" aria-label="Details for ${escAttr(ep.hostname || "")}">${icon("info")}</button></td>
       </tr>`;

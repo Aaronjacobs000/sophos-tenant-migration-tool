@@ -96,8 +96,8 @@ test("job start records each device's group from the preflight reads; dry run pl
   const real = await startMigration({ jobName: "wave 1", endpointIds: [uuid(1), uuid(4)] });
   const stored = await getJob(real.job.localJobId);
   assert.deepEqual(stored.endpointGroups, { [uuid(1)]: { id: "sg-fin", name: "Finance" }, [uuid(4)]: null });
-  const srcGets = fake.calls.filter((c) => c.tenant === "src" && c.method === "GET" && /\/endpoints\//.test(c.path));
-  assert.equal(srcGets.length, 5, "no reads beyond the existing preflight (3 for the dry run, 2 for the real run)");
+  const srcGets = fake.calls.filter((c) => c.tenant === "src" && c.method === "GET" && c.path.startsWith("/endpoint/v1/endpoints"));
+  assert.deepEqual(srcGets.map((c) => c.query.ids), [[uuid(1), uuid(2), uuid(4)].join(","), [uuid(1), uuid(4)].join(",")], "no reads beyond the preflight's, one call for the dry run and one for the real run");
 });
 
 test("dry run: plans additions by name, skips members and reports gaps, writes nothing", async () => {

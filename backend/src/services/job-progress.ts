@@ -14,7 +14,7 @@
  */
 
 import { checkInFor, checkInWindow, mergeEndpointStatuses } from "./device-check-in.js";
-import type { JobStatus, LocalMigrationJob } from "./migration-store.js";
+import type { JobStatus, LocalMigrationJob, TamperReading, TamperState } from "./migration-store.js";
 import type { MigrationEndpointStatus } from "../sophos/api/migrations.js";
 
 export type DeviceState = "requested" | "waiting" | "arrived" | "failed" | "expired";
@@ -39,6 +39,21 @@ export interface DeviceProgress {
   reason?: string;
   /** The device's group on the sending tenant when the job was created. */
   group?: string | null;
+  /** Tamper protection on the sending tenant when the job was created, and on the receiving tenant once it arrived. */
+  tamperProtection?: DeviceTamper;
+}
+
+export interface DeviceTamper {
+  /** On the sending tenant when the job was created; undefined for jobs from before 0.5.0. */
+  atSource?: boolean | null;
+  /** On the receiving tenant, from the latest read of the arrived device; undefined until then. */
+  arrived?: boolean | null;
+  /** False for a device without tamper protection, such as Linux. */
+  supported?: boolean | null;
+  /** When `arrived` was read. */
+  readAt?: string;
+  /** On at the source, off on the receiving tenant. */
+  lost: boolean;
 }
 
 export interface JobProgress {
@@ -57,6 +72,8 @@ export interface JobProgress {
   expiresAt: string;
   /** Earliest handover among devices still waiting for check-in. */
   oldestWaitSince?: string;
+  /** Arrived devices that had tamper protection on at the source and have it off now. */
+  tamperLost: number;
   devices: DeviceProgress[];
 }
 
@@ -88,17 +105,26 @@ export function jobProgress(job: LocalMigrationJob, now: number = Date.now()): J
     const entry = moved.get(id);
     // Jobs never checked since check-in tracking began have no saved check-in; the snapshot still says whether Sophos handed the device over.
     const c = job.checkIns?.[id] ?? checkInFor(entry, []);
+    const atSource = job.endpointTamperProtection?.[id];
     const base = {
       id,
       hostname: job.endpointHostnames?.[id] || id,
       newId: c.newId,
       handedOverAt: c.handedOverAt,
       group: job.endpointGroups ? (job.endpointGroups[id]?.name ?? null) : undefined,
+      ...(atSource ? { tamperProtection: { atSource: atSource.enabled, supported: atSource.supported, lost: false } } : {}),
     };
     switch (c.state) {
       case "checked-in": {
         const w = checkInWindow(c);
-        return { ...base, state: "arrived", checkedInAt: c.checkedInAt, ...(w?.after ? { checkedInAfter: w.after } : {}), checkInTimeExact: w?.exact ?? false };
+        return {
+          ...base,
+          state: "arrived",
+          checkedInAt: c.checkedInAt,
+          ...(w?.after ? { checkedInAfter: w.after } : {}),
+          checkInTimeExact: w?.exact ?? false,
+          ...arrivedTamper(atSource, latestReading(c.tamperProtection, job.arrivalTamper?.[id])),
+        };
       }
       case "move-failed":
         return { ...base, state: "failed", reason: entry?.reason ?? (entry as { errorMessage?: string } | undefined)?.errorMessage };
@@ -124,6 +150,7 @@ export function jobProgress(job: LocalMigrationJob, now: number = Date.now()): J
   else status = arrived > 0 ? "in-progress" : "requested";
 
   const waits = devices.filter((d) => d.state === "waiting" && d.handedOverAt).map((d) => d.handedOverAt!).sort();
+  const tamperLost = devices.filter((d) => d.tamperProtection?.lost).length;
 
   return {
     status,
@@ -137,7 +164,27 @@ export function jobProgress(job: LocalMigrationJob, now: number = Date.now()): J
     finished: finished || status === "cancelled",
     expiresAt,
     oldestWaitSince: waits[0],
+    tamperLost,
     devices,
+  };
+}
+
+/** The newer of two readings of an arrived device's tamper protection. */
+function latestReading(a: TamperReading | undefined, b: TamperReading | undefined): TamperReading | undefined {
+  if (!a || !b) return a ?? b;
+  return Date.parse(b.readAt) >= Date.parse(a.readAt) ? b : a;
+}
+
+/** An arrived device's tamper protection: the source state, the latest reading, and whether it was lost. */
+function arrivedTamper(atSource: TamperState | undefined, reading: TamperReading | undefined): { tamperProtection?: DeviceTamper } {
+  if (!atSource && !reading) return {};
+  return {
+    tamperProtection: {
+      ...(atSource ? { atSource: atSource.enabled } : {}),
+      supported: reading?.supported ?? atSource?.supported ?? null,
+      ...(reading ? { arrived: reading.enabled, readAt: reading.readAt } : {}),
+      lost: atSource?.enabled === true && reading?.enabled === false,
+    },
   };
 }
 

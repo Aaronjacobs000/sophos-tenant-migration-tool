@@ -17,7 +17,9 @@ const fake = createFakeSophos();
 const { root } = await bootApp(fake);
 const { setRetryDelay } = await import("../backend/dist/services/safe-files.js");
 const { getRingBuffer } = await import("../backend/dist/log.js");
+const { setReadBackDelays } = await import("../backend/dist/services/write-check.js");
 setRetryDelay(1);
+setReadBackDelays([0, 0, 0]);
 
 // The routers in the order server.ts mounts them.
 const serverSource = await readFile(new URL("../backend/src/server.ts", import.meta.url), "utf8");
@@ -66,8 +68,15 @@ fake.on(SRC, "GET", `/endpoint/v1/endpoints/${DEVICE}`, () => ({ body: { id: DEV
 fake.on(DST, "GET", "/web-filters/v1/site-lists", (req) => page([{ id: "dl-1", name: "Old list", numberOfSites: 1 }], req.query));
 fake.on(DST, "GET", "/endpoint/v1/endpoint-groups", (req) => page([{ id: "dg-fin", name: "Finance", type: "computer" }], req.query));
 fake.on(DST, "GET", "/endpoint/v1/endpoint-groups/dg-fin/endpoints", () => ({ body: { items: [], pages: { size: 500 } } }));
+// The moved device's record on the receiving tenant, for the tamper protection and scan actions.
+fake.on(DST, "GET", "/endpoint/v1/endpoints/new-device", () => ({ body: { id: "new-device", hostname: "WIN10", tamperProtectionEnabled: false, tamperProtectionSupported: true } }));
 
-async function seedJob() {
+/** The job, with its device checked in on the receiving tenant. */
+async function seedArrivedJob() {
+  await seedJob({ checkIns: { [DEVICE]: { state: "checked-in", newId: "new-device", checkedInAt: recent } } });
+}
+
+async function seedJob(extra = {}) {
   await mkdir(path.join(root, "data"), { recursive: true });
   await writeFile(path.join(root, "data", "migration-jobs.json"), JSON.stringify([{
     localJobId: "local-1", jobName: "wave 1", createdAt: new Date().toISOString(), direction: "source-to-dest",
@@ -75,6 +84,7 @@ async function seedJob() {
     endpointIds: [DEVICE], endpointHostnames: { [DEVICE]: "WIN10" },
     endpointGroups: { [DEVICE]: { id: "sg-fin", name: "Finance" } },
     status: "complete", sourceSnapshot: null, destSnapshot: null,
+    ...extra,
   }]));
 }
 
@@ -102,6 +112,8 @@ const WRITES = {
   "POST /migrate/exclusions": ["post", "/api/migrate/exclusions", { selections: { scanning: ["e-1"] } }],
   "POST /migrate/devices": ["post", "/api/migrate/devices", { jobName: "wave 1", endpointIds: [DEVICE] }],
   "POST /migrate/devices/jobs/:id/group-membership": ["post", "/api/migrate/devices/jobs/local-1/group-membership", { dryRun: false }, seedJob],
+  "POST /migrate/devices/jobs/:id/tamper-protection": ["post", "/api/migrate/devices/jobs/local-1/tamper-protection", { dryRun: false, turnOn: true, newPasswords: true, scope: "all" }, seedArrivedJob],
+  "POST /migrate/devices/jobs/:id/scan": ["post", "/api/migrate/devices/jobs/local-1/scan", { dryRun: false }, seedArrivedJob],
 };
 
 // Routes that write nothing to a tenant, with a request to show it, or null
@@ -113,6 +125,7 @@ const LOCAL = {
   "POST /preload/start": ["post", "/api/preload/start", {}],
   "POST /preload/refresh/:section/:side": ["post", "/api/preload/refresh/policies/dest", {}],
   "POST /checks/licenses": ["post", "/api/checks/licenses", { endpointIds: [DEVICE] }],
+  "POST /checks/tamper-protection": ["post", "/api/checks/tamper-protection", { endpointIds: [DEVICE] }],
   "POST /migrate/devices/jobs/:id/credentials": ["post", "/api/migrate/devices/jobs/local-1/credentials", { use: "current" }, seedJob],
   "POST /migrate/devices/jobs/:id/credentials/remove": ["post", "/api/migrate/devices/jobs/local-1/credentials/remove", {}, seedJob],
 };

@@ -160,7 +160,7 @@ async function exploreTenant(tenantId, tenantName) {
       <input type="search" id="tenant-ep-search" placeholder="Search devices in ${escAttr(tenantName)}" class="wide-search" />
       <button class="btn" id="tenant-ep-search-btn">Search</button>
     </div>
-    <div id="tenant-ep-results"><div class="empty-state">Enter a hostname above to search this tenant's endpoints.</div></div>
+    <div id="tenant-ep-results" class="table-wrap"><div class="empty-state">Enter a hostname above to search this tenant's endpoints.</div></div>
   `;
 
   const doSearch = async () => {

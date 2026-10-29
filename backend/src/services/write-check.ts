@@ -31,6 +31,11 @@ export function setReadBackDelays(ms: number[], policyMs: number[] = ms): void {
   policyDelaysMs = policyMs;
 }
 
+/** The waits for a read-back. */
+export function readBackDelays(): number[] {
+  return delaysMs;
+}
+
 /** The waits for a read-back that looks in the policy list. */
 export function policyReadBackDelays(): number[] {
   return policyDelaysMs;

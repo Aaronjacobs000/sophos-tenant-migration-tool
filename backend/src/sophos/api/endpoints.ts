@@ -64,6 +64,37 @@ export async function listAllEndpoints(
   return all;
 }
 
+/**
+ * Most IDs sent in one GET /endpoints?ids= call. The API gateway refuses a
+ * request line over 7,168 bytes (414, measured 29/10/2026), which is about
+ * 180 IDs; 100 stays well under it.
+ */
+export const MAX_IDS_PER_LIST = 100;
+
+/**
+ * The endpoint records for these IDs, read with GET /endpoints?ids= in
+ * batches of MAX_IDS_PER_LIST. An ID with no record is left out. A batch that
+ * fails is returned in `failed` with its IDs and the error, so the caller can
+ * say which devices were not read.
+ */
+export async function getEndpointsByIds(
+  client: SophosClient,
+  tenantId: string,
+  ids: string[],
+): Promise<{ records: SophosEndpoint[]; failed: Array<{ ids: string[]; error: string }> }> {
+  const records: SophosEndpoint[] = [];
+  const failed: Array<{ ids: string[]; error: string }> = [];
+  for (let i = 0; i < ids.length; i += MAX_IDS_PER_LIST) {
+    const batch = ids.slice(i, i + MAX_IDS_PER_LIST);
+    try {
+      records.push(...(await listAllEndpoints(client, tenantId, { ids: batch, pageSize: MAX_IDS_PER_LIST })));
+    } catch (err) {
+      failed.push({ ids: batch, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { records, failed };
+}
+
 export async function getEndpoint(
   client: SophosClient,
   tenantId: string,

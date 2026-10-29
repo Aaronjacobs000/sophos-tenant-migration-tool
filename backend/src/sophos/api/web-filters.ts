@@ -11,6 +11,11 @@ import { listAllPages } from "./paging.js";
 const SITE_LISTS_PATH = "/web-filters/v1/site-lists";
 const PROFILES_PATH = "/web-filters/v1/profiles";
 
+/** Most site lists a tenant can have (Sophos web filtering guide, 14/10/2026). */
+export const MAX_SITE_LISTS = 20;
+/** Most sites one list can hold; the API refuses more with 400 (measured 29/10/2026). */
+export const MAX_SITES_PER_LIST = 750;
+
 export interface WebFilterRef {
   id: string;
   name?: string;
@@ -98,4 +103,40 @@ export async function createProfile(
   body: Omit<SophosWebProfile, "id" | "updatedAt" | "consumers">,
 ): Promise<SophosWebProfile> {
   return client.tenantRequest<SophosWebProfile>(tenantId, PROFILES_PATH, { method: "POST", body });
+}
+
+/** PUT replaces the whole list: its name, description and every site (measured 29/10/2026). */
+export async function updateSiteList(
+  client: SophosClient,
+  tenantId: string,
+  id: string,
+  body: { name: string; description?: string; sites: string[] },
+): Promise<SophosSiteList> {
+  return client.tenantRequest<SophosSiteList>(tenantId, `${SITE_LISTS_PATH}/${encodeURIComponent(id)}`, { method: "PUT", body });
+}
+
+/** PUT replaces the whole profile, so the body carries every filtering field. */
+export async function updateProfile(
+  client: SophosClient,
+  tenantId: string,
+  id: string,
+  body: Omit<SophosWebProfile, "id" | "updatedAt" | "consumers">,
+): Promise<SophosWebProfile> {
+  return client.tenantRequest<SophosWebProfile>(tenantId, `${PROFILES_PATH}/${encodeURIComponent(id)}`, { method: "PUT", body });
+}
+
+/** The preset, category and category group names a tenant accepts in a profile. */
+export interface WebProfileMetadata {
+  presets?: Array<{ name: string }>;
+  categories?: Array<{ name: string; group?: string; label?: string }>;
+}
+
+/**
+ * GET /web-filters/v1/profiles/metadata. The names can differ between
+ * tenants (the guide). It refuses an Accept-Language it can't read with 400,
+ * including the "*" Node sends by default and "en-US"; "en" works (measured
+ * 29/10/2026). Category group names are the categories' `group` values.
+ */
+export async function getProfileMetadata(client: SophosClient, tenantId: string): Promise<WebProfileMetadata> {
+  return client.tenantRequest<WebProfileMetadata>(tenantId, `${PROFILES_PATH}/metadata`, { headers: { "Accept-Language": "en" } });
 }

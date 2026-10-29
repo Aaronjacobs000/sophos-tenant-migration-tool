@@ -2,7 +2,8 @@
  * Web filtering site lists and profiles.
  *   GET  /api/:side/web-filters/site-lists
  *   GET  /api/:side/web-filters/profiles
- *   POST /api/migrate/web-filters   { siteListIds, profileIds, dryRun }
+ *   POST /api/migrate/web-filters   { siteListIds, profileIds, dryRun, overwrite }
+ *        overwrite: true replaces a same-name destination item whose content differs
  *   POST /api/dest/web-filters/delete   { siteListIds, profileIds, dryRun }
  */
 
@@ -70,7 +71,8 @@ migrateWebFiltersRouter.post("/migrate/web-filters", async (req, res, next) => {
       return;
     }
     const dryRun = req.query?.dryRun === "true" || req.body?.dryRun === true;
-    res.json({ results: await copyWebFilters({ siteListIds, profileIds, dryRun }) });
+    const overwrite = req.body?.overwrite === true;
+    res.json({ results: await copyWebFilters({ siteListIds, profileIds, dryRun, overwrite }) });
   } catch (err) {
     next(err);
   }
