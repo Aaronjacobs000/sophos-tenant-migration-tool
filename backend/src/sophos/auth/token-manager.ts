@@ -5,12 +5,14 @@
  *
  * Local modifications:
  *   - Import of SOPHOS_AUTH_URL redirected from "../config/config.js" to "../constants.js".
+ *   - The token request refuses a redirect instead of following it.
  *
  * Manages OAuth2 client credentials authentication with Sophos Central.
  * Handles token acquisition and transparent refresh before expiry.
  */
 
 import { SOPHOS_AUTH_URL } from "../constants.js";
+import { refuseRedirect } from "../redirect.js";
 import type { SophosTokenResponse } from "../types/sophos.js";
 
 export class TokenManager {
@@ -55,11 +57,14 @@ export class TokenManager {
       scope: "token",
     });
 
+    // Never followed to another address: a 307 or 308 would send the client secret along with it.
     const response = await fetch(SOPHOS_AUTH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+      redirect: "manual",
     });
+    refuseRedirect(response, SOPHOS_AUTH_URL);
 
     if (!response.ok) {
       const errorText = await response.text();

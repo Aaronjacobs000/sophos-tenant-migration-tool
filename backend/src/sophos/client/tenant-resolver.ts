@@ -7,6 +7,7 @@
  *   - Import of SOPHOS_GLOBAL_API redirected from "../config/config.js" to "../constants.js".
  *   - Added getTenantInfo(tenantId) helper.
  *   - Updated error messages to remove MCP tool references.
+ *   - whoami and the tenant list refuse a redirect instead of following it.
  *
  * Discovers the caller's identity type via /whoami/v1 and resolves
  * tenant IDs to their regional API hosts. Caches the mapping.
@@ -14,6 +15,7 @@
  */
 
 import { SOPHOS_GLOBAL_API } from "../constants.js";
+import { refuseRedirect } from "../redirect.js";
 import type { TokenManager } from "../auth/token-manager.js";
 import type { SophosWhoamiResponse } from "../types/sophos.js";
 
@@ -60,9 +62,12 @@ export class TenantResolver {
    */
   async init(): Promise<CallerIdentity> {
     const token = await this.tokenManager.getToken();
-    const response = await fetch(`${SOPHOS_GLOBAL_API}/whoami/v1`, {
+    const whoamiUrl = `${SOPHOS_GLOBAL_API}/whoami/v1`;
+    const response = await fetch(whoamiUrl, {
       headers: { Authorization: `Bearer ${token}` },
+      redirect: "manual",
     });
+    refuseRedirect(response, whoamiUrl);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -146,7 +151,9 @@ export class TenantResolver {
           Authorization: `Bearer ${token}`,
           [idHeader.name]: idHeader.value,
         },
+        redirect: "manual",
       });
+      refuseRedirect(response, url.toString());
 
       if (!response.ok) {
         const errorText = await response.text();
