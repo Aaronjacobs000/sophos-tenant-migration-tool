@@ -20,9 +20,11 @@ async function boot() {
   loadWindow(direction);
   loadLicenses(ids, direction);
   loadTamper(ids, direction);
+  loadKnownIssues(ids, direction);
   document.getElementById("window-recheck").addEventListener("click", () => loadWindow(direction));
   document.getElementById("license-recheck").addEventListener("click", () => loadLicenses(ids, direction));
   document.getElementById("tamper-recheck").addEventListener("click", () => loadTamper(ids, direction));
+  document.getElementById("known-issues-recheck").addEventListener("click", () => loadKnownIssues(ids, direction));
 }
 
 // ---------- pre-flight: Device Migration setting (read only) ----------
@@ -187,6 +189,40 @@ function renderTamper(res) {
       <dt>Checked</dt><dd>${escapeHtml(new Date(res.checkedAt).toLocaleTimeString())}</dd>
     </dl>
     <p class="hint check-foot">You don't need to turn off tamper protection to move devices. After the move, the job page can turn it on and make new passwords.</p>`;
+}
+
+// ---------- known issues (read only) ----------
+
+async function loadKnownIssues(ids, direction) {
+  const body = document.getElementById("known-issues-body");
+  document.getElementById("known-issues-summary").innerHTML = "";
+  body.innerHTML = `<p class="hint"><span class="spin"></span> Checking known issues for this move</p>`;
+  try {
+    const res = await api.post("/api/checks/known-issues", { endpointIds: ids, direction });
+    renderKnownIssues(res);
+  } catch (err) {
+    body.innerHTML = `<div class="banner banner-err">${escapeHtml(err.message || "Check failed")}</div>`;
+  }
+}
+
+function renderKnownIssues(res) {
+  const n = res.findings.length;
+  document.getElementById("known-issues-summary").innerHTML = n
+    ? `<span class="tag tag-warn">${n} to check</span>`
+    : `<span class="tag tag-ok">None apply</span>`;
+  const findings = n
+    ? `<ul class="check-warnings">${res.findings.map((f) => `<li>${icon("alert")}<span>${escapeHtml(f.warning)} <a href="${escapeHtml(f.url)}" target="_blank" rel="noopener">Known Issues list</a></span></li>`).join("")}</ul>`
+    : `<p class="hint">No known issue applies to this move.</p>`;
+  const region = (t) => `${escapeHtml(t.tenantName || t.side)}: ${escapeHtml(t.region || "unknown")}`;
+  document.getElementById("known-issues-body").innerHTML = `
+    ${findings}
+    <dl class="kv-list check-kv">
+      <dt>Sending region</dt><dd>${region(res.sending)}</dd>
+      <dt>Receiving region</dt><dd>${region(res.receiving)}</dd>
+      <dt>Issues checked</dt><dd>${escapeHtml(res.checked.join(", ") || "none")}</dd>
+      <dt>Checked</dt><dd>${escapeHtml(new Date(res.checkedAt).toLocaleTimeString())}</dd>
+    </dl>
+    <p class="hint check-foot">Issues from the Sophos Known Issues list that affect a device move. They warn and never block.</p>`;
 }
 
 function loadSelection() {

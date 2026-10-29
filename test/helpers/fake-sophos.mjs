@@ -119,7 +119,9 @@ export function createFakeSophos() {
       return respond(await route.handler(req));
     }
 
-    const tenant = Object.values(tenants).find((t) => t.host === url.origin);
+    // Tenants in one data region share its API host; the scope header says which one is called.
+    const onHost = Object.values(tenants).filter((t) => t.host === url.origin);
+    const tenant = onHost.find((t) => t.tenantId === headers["x-tenant-id"]) ?? onHost[0];
     if (!tenant) throw new Error(`fake-sophos: unexpected host ${url.origin}`);
     if (headers["x-tenant-id"] !== tenant.tenantId) return json(403, { error: "Forbidden", message: "tenant header mismatch" });
     calls.push({ kind: "tenant", tenant: tenant === SRC ? "src" : tenant === DST ? "dst" : tenant === OTHER ? "oth" : tenant.tenantId, ...req, url: url.href });

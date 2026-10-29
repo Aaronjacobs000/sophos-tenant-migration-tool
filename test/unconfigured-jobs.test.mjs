@@ -123,6 +123,7 @@ test("the routes that need the connection still refuse with 409 unconfigured, be
     ["post", "/api/migrate/devices", { jobName: "wave 3", endpointIds: [DEVICE] }],
     ["get", "/api/checks/migration-window"],
     ["post", "/api/checks/licenses", { endpointIds: [DEVICE] }],
+    ["post", "/api/checks/known-issues", { endpointIds: [DEVICE] }],
   ]) {
     const res = await http[method](url, body);
     assert.equal(res.status, 409, `${url} answered ${res.status}`);
