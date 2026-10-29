@@ -46,10 +46,13 @@ async function getToken(clientId, clientSecret) {
     client_secret: clientSecret,
     scope: "token",
   });
+  // redirect: "manual" on every call: a followed 307 or 308 would send the client secret or the
+  // tenant ID to the new host. A redirect is not ok, so it fails with its status.
   const res = await fetch(AUTH_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
+    redirect: "manual",
   });
   if (!res.ok) throw new Error(`Auth failed: ${res.status} ${await res.text()}`);
   return (await res.json()).access_token;
@@ -58,6 +61,7 @@ async function getToken(clientId, clientSecret) {
 async function whoami(token) {
   const res = await fetch(WHOAMI_URL, {
     headers: { Authorization: `Bearer ${token}` },
+    redirect: "manual",
   });
   if (!res.ok) throw new Error(`whoami failed: ${res.status} ${await res.text()}`);
   const w = await res.json();
@@ -88,6 +92,7 @@ async function fetchAll(apiHost, tenantId, token, path, params = {}) {
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, "X-Tenant-ID": tenantId },
+      redirect: "manual",
     });
     if (!res.ok) throw new Error(`GET ${path} failed: ${res.status} ${await res.text()}`);
     const data = await res.json();

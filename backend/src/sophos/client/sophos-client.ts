@@ -14,6 +14,8 @@
  *     answered 429 still waits and is sent again: Sophos did not act on it.
  *   - An error Sophos answered with an HTTP status throws SophosHttpError,
  *     which keeps the status, so the tool's own API can pass it on.
+ *   - A redirect is refused instead of followed (SophosRedirectError), and
+ *     never retried.
  *
  * HTTP client for Sophos Central APIs. Handles region-aware routing, auth
  * headers, retries, and error mapping. Supports tenant-scoped requests
@@ -23,6 +25,7 @@
 import type { TokenManager } from "../auth/token-manager.js";
 import type { TenantResolver } from "./tenant-resolver.js";
 import type { SophosApiError } from "../types/sophos.js";
+import { refuseRedirect } from "../redirect.js";
 
 /** The advice on a write that ended without a clear answer. */
 export const UNCLEAR_WRITE_ADVICE = "The change may still have gone through: check the destination before trying again.";
@@ -210,8 +213,10 @@ export class SophosClient {
       try {
         let response: globalThis.Response;
         try {
+          // A redirect is refused rather than followed: the request carries the tenant's ID and any body to the new host.
           response = await fetch(url, {
             ...options,
+            redirect: "manual",
             signal: controller.signal,
           });
         } catch (error) {
@@ -224,6 +229,8 @@ export class SophosClient {
           await retryRead(new Error(reason));
           continue;
         }
+
+        refuseRedirect(response, url);
 
         if (response.status === 429) {
           const retryAfter = response.headers.get("Retry-After");
