@@ -47,3 +47,13 @@ test("Help's Dry runs card names the Preview buttons the pages have, and the pag
   assert.match(compare, /<button id="preview-btn" class="btn">Preview<\/button>/);
   assert.ok(card.includes("Compare"), "Help names Compare");
 });
+
+test("Help and the README name MACEP-11452, the fix, and the Known Issues list", () => {
+  const checks = help.slice(help.indexOf("<h2>Checks before a move</h2>"), help.indexOf("<h2>Tamper protection</h2>"));
+  assert.match(checks, /runs four read-only checks/);
+  for (const [name, text] of [["Help", checks], ["README", readme]]) {
+    assert.ok(text.includes("MACEP-11452: a Mac moved through the API to a tenant in another data region only partly migrates, so updates, Live Query and Live Connect fail."), name);
+    assert.ok(text.includes("uninstall Sophos from them and reinstall it from the receiving tenant"), name);
+    assert.ok(text.includes("https://docs.sophos.com/support/kil/index.html"), name);
+  }
+});

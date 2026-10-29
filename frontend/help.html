@@ -75,11 +75,12 @@
 
       <section class="panel-card">
         <h2>Checks before a move</h2>
-        <p>The Start migration page runs three read-only checks:</p>
+        <p>The Start migration page runs four read-only checks:</p>
         <ul>
           <li>Device Migration setting: whether both tenants allow migration, and when that ends. The tool creates no job while either has it off, and it warns when a window closes within a day, because devices that have not checked in by then will not move.</li>
           <li>Destination licences: free seats against the selected computers and servers, and products the source has that the destination lacks (endpoint and server protection, XDR, MDR, Device Encryption). Product names map loosely to features, so it warns and never blocks.</li>
           <li>Tamper protection: the global setting on both tenants, and how many selected devices have it on now. A moved device takes the receiving tenant's setting, so it warns when the receiving tenant has it off. It never blocks.</li>
+          <li>Known issues: known Sophos issues that affect a move, from the <a href="https://docs.sophos.com/support/kil/index.html" target="_blank" rel="noopener">Known Issues list</a>. MACEP-11452: a Mac moved through the API to a tenant in another data region only partly migrates, so updates, Live Query and Live Connect fail. When the tenants' regions differ, it warns with the number of selected Macs: after the move, uninstall Sophos from them and reinstall it from the receiving tenant. It never blocks.</li>
         </ul>
       </section>
 
