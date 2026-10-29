@@ -125,21 +125,22 @@ test("the job page shows tamper protection in each lane, flags one lost, and off
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /<button id="tamper-preview"[^>]*>Preview<\/button>/);
-  assert.match(html, /id="tamper-new-passwords" data-tamper-option checked/, "new passwords is on by default");
+  assert.match(html, /id="tamper-turn-on" data-tamper-option checked/, "turn on is on by default");
+  assert.match(html, /id="tamper-new-passwords" data-tamper-option \/>/, "new passwords is off by default: a move already gives a new password");
 });
 
-test("the job page's tamper protection choices default to both on, are remembered per job, and Apply sends what the preview showed", async () => {
+test("the job page's tamper protection choices default to turn on only, are remembered per job, and Apply sends what the preview showed", async () => {
   const js = await readFile(new URL("../frontend/js/page-migrate-job-detail.js", import.meta.url), "utf8");
   const src = js.slice(js.indexOf("const TAMPER_DEFAULTS"), js.indexOf("function showTamperOptions"));
   const store = new Map();
   const localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
   const make = (id) => new Function("state", "localStorage", `${src}; return tamperOptions;`)({ id }, localStorage);
-  assert.deepEqual(make("job-a")(), { turnOn: true, newPasswords: true, scope: "all" });
-  store.set("tamperOptions:job-a", JSON.stringify({ turnOn: true, newPasswords: false, scope: "was-on" }));
-  assert.deepEqual(make("job-a")(), { turnOn: true, newPasswords: false, scope: "was-on" });
-  assert.deepEqual(make("job-b")(), { turnOn: true, newPasswords: true, scope: "all" }, "another job keeps the defaults");
+  assert.deepEqual(make("job-a")(), { turnOn: true, newPasswords: false, scope: "all" });
+  store.set("tamperOptions:job-a", JSON.stringify({ turnOn: false, newPasswords: true, scope: "was-on" }));
+  assert.deepEqual(make("job-a")(), { turnOn: false, newPasswords: true, scope: "was-on" });
+  assert.deepEqual(make("job-b")(), { turnOn: true, newPasswords: false, scope: "all" }, "another job keeps the defaults");
   const blocked = new Function("state", "localStorage", `${src}; return tamperOptions;`)({ id: "job-a" }, { getItem: () => { throw new Error("blocked"); } });
-  assert.deepEqual(blocked(), { turnOn: true, newPasswords: true, scope: "all" }, "blocked storage falls back to the defaults");
+  assert.deepEqual(blocked(), { turnOn: true, newPasswords: false, scope: "all" }, "blocked storage falls back to the defaults");
 
   // Every post states dryRun as a boolean, and Apply uses the options of the preview it confirmed.
   assert.match(js, /\/tamper-protection`, \{ dryRun, \.\.\.options \}\)/);
@@ -169,4 +170,47 @@ test("Help and the README say tamper protection can stay on for a move, and how 
     assert.match(text, /--registeronly/);
     assert.match(text, /turn tamper protection back on/i);
   }
+});
+
+test("the job page, Help and the README say a move already gives a new password, and new passwords are for changing it again", async () => {
+  const html = await readFile(new URL("../frontend/migrate-job-detail.html", import.meta.url), "utf8");
+  const help = await readFile(new URL("../frontend/help.html", import.meta.url), "utf8");
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  const plain = (t) => t.replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+  const card = plain(html.slice(html.indexOf('id="tamper-card"'), html.indexOf('id="tamper-body"')));
+  for (const [name, text] of [["job page", card], ["Help", plain(help)], ["README", readme]]) {
+    assert.doesNotMatch(text, /password from before the move stops working/, name);
+    assert.match(text, /the move already gives (it|each device) a new (tamper protection )?password from (that|the receiving) tenant/i, name);
+    assert.match(text, /Make new passwords\W+changes it again, for example if you shared it during the move/, name);
+  }
+});
+
+test("the job page's alert for a device that lost tamper protection says to turn it on for the tenant first when the tenant has it off", async () => {
+  const js = await readFile(new URL("../frontend/js/page-migrate-job-detail.js", import.meta.url), "utf8");
+  const src = js.slice(js.indexOf("function renderAlerts"), js.indexOf("\n}\n", js.indexOf("function alert(")) + 2);
+  let shown = "";
+  const renderAlerts = new Function("setHtml", "esc", "icon", "checkable", "WAIT_NOTE_MS", `${src}; return renderAlerts;`)(
+    (_id, html) => { shown = html; }, String, () => "", () => true, 2 * 3600e3,
+  );
+  const job = (global) => ({
+    monitor: { state: "ok" },
+    progress: { tamperLost: 2, failed: 0, expired: 0, finished: true, devices: [] },
+    ...(global === undefined ? {} : { receivingTamperGlobal: { enabled: global, readAt: "2026-10-29T00:00:00.000Z" } }),
+  });
+  for (const global of [undefined, true]) {
+    renderAlerts(job(global));
+    assert.match(shown, /2 devices arrived without tamper protection/);
+    assert.match(shown, /The Tamper protection card below can turn it on\./, String(global));
+  }
+  renderAlerts(job(false));
+  assert.doesNotMatch(shown, /card below can turn it on/);
+  assert.match(shown, /Tamper protection is off for the whole receiving tenant, so turn it on for the tenant first: in Sophos Fusion, go to Global Settings &gt; Tamper Protection\./);
+});
+
+test("the job page's tamper protection card names a device it can't turn on, and its Apply says only what will change", async () => {
+  const js = await readFile(new URL("../frontend/js/page-migrate-job-detail.js", import.meta.url), "utf8");
+  assert.match(js, /"cant-turn-on": \["tag-warn", "can't turn on"\]/);
+  const body = js.slice(js.indexOf("async function applyTamper"), js.indexOf("\n}\n", js.indexOf("async function applyTamper")));
+  // The confirm names the changes the previewed rows will get, not the ticked options.
+  assert.match(body, /shown\.rows\.filter\(\(r\) => r\.status === "will-change"\)\.flatMap\(\(r\) => r\.changes\)/);
 });

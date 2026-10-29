@@ -12,7 +12,10 @@
  * password through the device's own tamper protection read, which shows when
  * its password last changed. A password is never read out or kept. A device
  * can't be turned on while the tenant's global setting is off, and the API
- * can only read that setting.
+ * can only read that setting, so then turning on is neither offered nor sent;
+ * new passwords still are. A move itself gives each device a new password
+ * from the receiving tenant (seen 29/10/2026), so new passwords are for
+ * changing it again.
  *
  * Scan. POST /endpoint/v1/endpoints/scans { ids }, at most 500 IDs a call.
  * Sophos only says a scan was requested; a scan that runs shows as an event
@@ -27,7 +30,7 @@
 import { auditOrWarn } from "./audit-log.js";
 import { foundNote, isUnclearWrite, readBackDelays, READ_LAG_CAVEAT, UnclearWriteError } from "./write-check.js";
 import { verifiedContextsForJob } from "./job-access.js";
-import { getJob, updateJob, type LocalMigrationJob, type TamperReading } from "./migration-store.js";
+import { getJob, updateJob, type LocalMigrationJob, type TamperGlobalReading, type TamperReading } from "./migration-store.js";
 import { tamperReading } from "./device-check-in.js";
 import { JobNotFoundError } from "./group-membership.js";
 import { maskSecrets } from "../log.js";
@@ -65,13 +68,14 @@ export type TamperRowStatus =
   | "requested"
   | "failed"
   | "already-on"
+  | "cant-turn-on"
   | "not-supported"
   | "out-of-scope"
   | "not-arrived"
   | "not-found";
 
 export const TAMPER_STATUSES: TamperRowStatus[] = [
-  "will-change", "changed", "requested", "failed", "already-on", "not-supported", "out-of-scope", "not-arrived", "not-found",
+  "will-change", "changed", "requested", "failed", "already-on", "cant-turn-on", "not-supported", "out-of-scope", "not-arrived", "not-found",
 ];
 
 export interface TamperRow {
@@ -190,12 +194,15 @@ function deviceError(e: NonNullable<BulkEndpointResponse["errors"]>[number]): st
   return e.errorMessage ? `${code}: ${e.errorMessage}` : code;
 }
 
-/** Save what the tool just read of each device's tamper protection, for the job page. */
-async function saveReadings(localJobId: string, readings: Record<string, TamperReading>): Promise<void> {
-  if (!Object.keys(readings).length) return;
+/** Save what the tool just read of each device's tamper protection, and of the tenant's, for the job page. */
+async function saveReadings(localJobId: string, readings: Record<string, TamperReading>, global: TamperGlobalReading | null): Promise<void> {
+  if (!Object.keys(readings).length && !global) return;
   const job = await getJob(localJobId);
   if (!job) return;
-  await updateJob(localJobId, { arrivalTamper: { ...(job.arrivalTamper ?? {}), ...readings } });
+  await updateJob(localJobId, {
+    ...(Object.keys(readings).length ? { arrivalTamper: { ...(job.arrivalTamper ?? {}), ...readings } } : {}),
+    ...(global ? { receivingTamperGlobal: global } : {}),
+  });
 }
 
 async function inPool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -235,6 +242,9 @@ export async function tamperProtectionAction(localJobId: string, req: TamperActi
     ),
   ]);
   const globalEnabled = global.enabled;
+  // Turning on has no effect while the tenant's global setting is off, so it is not offered or sent.
+  const turnOn = req.turnOn && globalEnabled !== false;
+  const cantTurnOn = "tamper protection is off for the whole tenant";
 
   const readings: Record<string, TamperReading> = {};
   const rows: TamperRow[] = job.endpointIds.map((id) => {
@@ -258,10 +268,13 @@ export async function tamperProtectionAction(localJobId: string, req: TamperActi
       return { ...row, status: "out-of-scope", message: atSource === false ? "off at the source" : "not recorded at the source" };
     }
     const changes: TamperChange[] = [];
-    if (req.turnOn && tp.enabled !== true) changes.push("turn-on");
+    const blocked = req.turnOn && !turnOn && tp.enabled !== true;
+    if (turnOn && tp.enabled !== true) changes.push("turn-on");
     if (req.newPasswords) changes.push("new-password");
-    if (!changes.length) return { ...row, status: "already-on", message: "already on, so nothing is sent" };
-    return { ...row, changes, status: "will-change" };
+    if (!changes.length) {
+      return blocked ? { ...row, status: "cant-turn-on", message: cantTurnOn } : { ...row, status: "already-on", message: "already on, so nothing is sent" };
+    }
+    return { ...row, changes, status: "will-change", ...(blocked ? { message: `can't turn on: ${cantTurnOn}` } : {}) };
   });
 
   const notes: string[] = [];
@@ -276,17 +289,18 @@ export async function tamperProtectionAction(localJobId: string, req: TamperActi
 
   const toSend = rows.filter((r) => r.status === "will-change");
   if (!req.dryRun && toSend.length) {
-    const sent = await sendTamper(job, side, ctx, req, toSend);
+    const sending = { ...req, turnOn };
+    const sent = await sendTamper(job, side, ctx, sending, toSend);
     // Read back what Sophos made of it: the records for tamper protection, the
     // device's own read for each new password.
-    const afterAt = await readBackTamper(ctx, req, sent);
+    const afterAt = await readBackTamper(ctx, sending, sent);
     for (const r of toSend) {
       if (r.after !== undefined) readings[r.endpointId] = { enabled: r.after, supported: readings[r.endpointId]?.supported ?? true, readAt: afterAt };
-      settle(r, sent.get(r)!.answer, globalEnabled, tenant);
+      settle(r, sent.get(r)!.answer);
     }
   }
 
-  await saveReadings(localJobId, readings);
+  await saveReadings(localJobId, readings, globalEnabled === null ? null : { enabled: globalEnabled, readAt });
   const counts = Object.fromEntries(TAMPER_STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length])) as Record<TamperRowStatus, number>;
   return { localJobId, dryRun: req.dryRun, receivingSide: side, receivingName: name, globalEnabled, sourceRecorded, options, rows, counts, notes };
 }
@@ -378,7 +392,7 @@ async function readBackTamper(ctx: TenantContext, req: TamperActionRequest, sent
 }
 
 /** The row's final status, from Sophos's answer and the read-back. */
-function settle(r: TamperRow, answer: Answer, globalEnabled: boolean | null, tenant: string): void {
+function settle(r: TamperRow, answer: Answer): void {
   if (answer.kind === "refused") {
     r.status = "failed";
     r.message = answer.message;
@@ -386,7 +400,7 @@ function settle(r: TamperRow, answer: Answer, globalEnabled: boolean | null, ten
   }
   const missing: string[] = [];
   if (r.changes.includes("turn-on") && r.after !== true) {
-    missing.push(`tamper protection still reads ${r.after === false ? "off" : "unknown"}${globalEnabled === false ? `, and it can't go on while it is off for the whole tenant${tenant}` : ""}`);
+    missing.push(`tamper protection still reads ${r.after === false ? "off" : "unknown"}`);
   }
   if (r.changes.includes("new-password") && r.passwordChanged !== true) {
     missing.push("the read-back did not show a new password");

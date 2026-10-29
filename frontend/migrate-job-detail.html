@@ -91,13 +91,14 @@
           <button id="tamper-preview" class="btn btn-small" data-action="tamper-preview">Preview</button>
           <button id="tamper-apply" class="btn btn-small btn-primary" data-action="tamper-apply" disabled>Apply</button>
         </div>
-        <p class="card-sub">A moved device takes the receiving tenant's tamper protection. This turns it on for devices
-          that have checked in, and makes each one a new password, so a password from before the move stops working.
-          It can't turn tamper protection on while it is off for the whole tenant. These choices are remembered for
-          this job in this browser.</p>
+        <p class="card-sub">A moved device takes the receiving tenant's tamper protection, and the move already gives it
+          a new password from that tenant. This turns tamper protection on for devices that have checked in.
+          <em>Make new passwords</em> changes it again, for example if you shared it during the move. It can't turn
+          tamper protection on while it is off for the whole tenant. These choices are remembered for this job in this
+          browser.</p>
         <div class="tamper-options">
           <label class="checkbox"><input type="checkbox" id="tamper-turn-on" data-tamper-option checked /> Turn on where it is off</label>
-          <label class="checkbox"><input type="checkbox" id="tamper-new-passwords" data-tamper-option checked /> Make new passwords</label>
+          <label class="checkbox"><input type="checkbox" id="tamper-new-passwords" data-tamper-option /> Make new passwords</label>
           <label class="tamper-scope">Devices
             <select id="tamper-scope" data-tamper-option>
               <option value="all">All arrived devices</option>

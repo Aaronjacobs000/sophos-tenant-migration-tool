@@ -152,17 +152,34 @@ test("apply: Sophos refuses some devices, and a 202 one device never applies", a
   assert.equal(by(res, 4).status, "not-found");
 });
 
-test("apply: with the tenant's global setting off, the preview says why and a device that stays off says so", async () => {
-  await seed({ n: 1 });
-  const ctl = endpointActions(fake, DST, records(1));
+test("with the tenant's global setting off: turn on is not offered or sent, new passwords still are, and the job keeps the setting", async () => {
+  await seed({ n: 2 });
+  const ctl = endpointActions(fake, DST, records(2, { on: [2] }));
   ctl.global.enabled = false;
-  const preview = await tamperProtectionAction("local-1", { dryRun: true, ...ALL });
-  assert.equal(preview.globalEnabled, false);
-  assert.match(preview.notes[0], /^Tamper protection is off for the whole receiving tenant Test Destination, so a device can't be turned on until it is turned on there in Sophos Fusion under Global Settings > Tamper Protection\. The API can only read this setting\.$/);
+  fake.reset();
+  const onOnly = await tamperProtectionAction("local-1", { dryRun: true, turnOn: true, newPasswords: false, scope: "all" });
+  assert.equal(onOnly.globalEnabled, false);
+  assert.match(onOnly.notes[0], /^Tamper protection is off for the whole receiving tenant Test Destination, so a device can't be turned on until it is turned on there in Sophos Fusion under Global Settings > Tamper Protection\. The API can only read this setting\.$/);
+  assert.deepEqual([by(onOnly, 1).status, by(onOnly, 1).changes, by(onOnly, 1).message], ["cant-turn-on", [], "tamper protection is off for the whole tenant"]);
+  assert.equal(by(onOnly, 2).status, "already-on");
+  assert.equal(onOnly.counts["will-change"], 0, "nothing for Apply to send");
+  assert.equal(onOnly.counts["cant-turn-on"], 1);
+  const job = await getJob("local-1");
+  assert.equal(job.receivingTamperGlobal.enabled, false, "the job keeps the receiving tenant's setting for its alert");
+  assert.equal(publicJob(job).receivingTamperGlobal.enabled, false);
+
+  const both = await tamperProtectionAction("local-1", { dryRun: true, ...ALL });
+  assert.deepEqual([by(both, 1).status, by(both, 1).changes, by(both, 1).message], ["will-change", ["new-password"], "can't turn on: tamper protection is off for the whole tenant"]);
+  assert.deepEqual([by(both, 2).status, by(both, 2).changes], ["will-change", ["new-password"]]);
+
   const res = await tamperProtectionAction("local-1", { dryRun: false, ...ALL });
-  assert.equal(res.rows[0].status, "requested");
-  assert.match(res.rows[0].message, /still reads off, and it can't go on while it is off for the whole tenant Test Destination/);
-  assert.equal(res.rows[0].passwordChanged, true);
+  assert.deepEqual(tpWrites().map((w) => w.body), [{ ids: [newId(1), newId(2)], regeneratePassword: true }], "enabled is not sent");
+  assert.deepEqual(res.rows.map((r) => [r.status, r.passwordChanged]), [["changed", true], ["changed", true]]);
+  assert.equal(by(res, 1).after, false);
+
+  ctl.global.enabled = true;
+  await tamperProtectionAction("local-1", { dryRun: true, turnOn: true, newPasswords: false, scope: "all" });
+  assert.equal((await getJob("local-1")).receivingTamperGlobal.enabled, true, "a later read replaces it");
 });
 
 test("apply: an unclear answer is never sent again; the read-back decides", async () => {

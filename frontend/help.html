@@ -89,10 +89,12 @@
           tamper protection when it arrives, so if that tenant has it off under <strong>Global Settings &gt; Tamper
           Protection</strong>, moved devices arrive without it. Turn it on there first; the API can only read that setting.</p>
         <p>The job page shows each device's tamper protection at the source and after it arrives, and flags a device
-          that had it on and arrived without it. Its <strong>Tamper protection</strong> card turns it on and makes each
-          device a new password, so a password from before the move stops working. Both are on by default, and the
-          choices are remembered for the job in that browser. It runs only when you confirm, on devices that have checked
-          in, and reads each one back. No password is shown or kept.</p>
+          that had it on and arrived without it. Its <strong>Tamper protection</strong> card turns it on for devices that
+          have checked in. The move already gives each device a new password from the receiving tenant;
+          <strong>Make new passwords</strong> changes it again, for example if you shared it during the move, and is off
+          by default. The choices are remembered for the job in that browser. The card runs only when you confirm, and
+          reads each device back. While tamper protection is off for the whole receiving tenant, it can't turn a device
+          on, but it can still ask for new passwords. No password is shown or kept.</p>
         <p>If a device can't move through the API, for example an agent too old to migrate, register it to the new tenant
           by hand. On Windows that is <code>SophosSetup.exe --registeronly</code>, which needs tamper protection off on
           the device. Turn it off in Sophos Fusion for those devices only and register them. Then, on the tenant they

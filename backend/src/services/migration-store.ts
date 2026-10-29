@@ -44,6 +44,12 @@ export interface TamperReading extends TamperState {
   readAt: string;
 }
 
+/** The receiving tenant's global tamper protection setting, and when the tool read it. */
+export interface TamperGlobalReading {
+  enabled: boolean;
+  readAt: string;
+}
+
 /**
  * Where a device is on the receiving tenant. Sophos hands a device over within
  * seconds, but the device only moves when it next checks in, under its new ID.
@@ -159,6 +165,11 @@ export interface LocalMigrationJob {
    * at the same time can't undo it.
    */
   arrivalTamper?: Record<string, TamperReading>;
+  /**
+   * The receiving tenant's global tamper protection, from the latest job page
+   * action that could read it. While it is off, a device can't be turned on.
+   */
+  receivingTamperGlobal?: TamperGlobalReading;
   /**
    * Notes from starting the job, shown on the job page: a trigger Sophos
    * answered unclearly that a read-back found started says so here.

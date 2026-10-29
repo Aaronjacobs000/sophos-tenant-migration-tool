@@ -292,8 +292,12 @@ function renderAlerts(job) {
     out.push(alert("info", "info", "Sophos gave no clear answer when this move started", `${esc(note)}.`, ""));
   }
   if (p.tamperLost > 0) {
+    // While the receiving tenant has it off, a device can't be turned on.
+    const next = job.receivingTamperGlobal?.enabled === false
+      ? "Tamper protection is off for the whole receiving tenant, so turn it on for the tenant first: in Sophos Fusion, go to Global Settings &gt; Tamper Protection. Then preview again on the Tamper protection card below."
+      : "The Tamper protection card below can turn it on.";
     out.push(alert("warn", "lock", `${p.tamperLost} device${p.tamperLost === 1 ? "" : "s"} arrived without tamper protection`,
-      `${p.tamperLost === 1 ? "It" : "They"} had it on at the source. A moved device takes the receiving tenant's setting. The Tamper protection card below can turn it on.`,
+      `${p.tamperLost === 1 ? "It" : "They"} had it on at the source. A moved device takes the receiving tenant's setting. ${next}`,
       actions(btn("goto-tamper", "Go to tamper protection", true))));
   }
   if (checkable(job) && !p.finished && p.oldestWaitSince && Date.now() - Date.parse(p.oldestWaitSince) > WAIT_NOTE_MS) {
@@ -801,9 +805,10 @@ function groupPicker(r, groups) {
 
 // ---------- tamper protection and scan after arrival ----------
 
-const TAMPER_DEFAULTS = { turnOn: true, newPasswords: true, scope: "all" };
+// A move already gives each device a new password from the receiving tenant, so new passwords start off.
+const TAMPER_DEFAULTS = { turnOn: true, newPasswords: false, scope: "all" };
 
-/** The choices for this job, as last set in this browser, or the defaults (both changes on). */
+/** The choices for this job, as last set in this browser, or the defaults (turn on only). */
 function tamperOptions() {
   try {
     const saved = JSON.parse(localStorage.getItem(`tamperOptions:${state.id}`) || "null");
@@ -881,7 +886,9 @@ async function applyTamper() {
   const n = shown?.counts?.["will-change"] ?? 0;
   if (!n) return;
   const o = shown.options;
-  const what = [o.turnOn ? "turn tamper protection on where it is off" : "", o.newPasswords ? "make a new tamper protection password" : ""].filter(Boolean).join(" and ");
+  // Name what the previewed rows will get: turning on is left out while the tenant has it off.
+  const changes = new Set(shown.rows.filter((r) => r.status === "will-change").flatMap((r) => r.changes));
+  const what = [changes.has("turn-on") ? "turn tamper protection on where it is off" : "", changes.has("new-password") ? "make a new tamper protection password" : ""].filter(Boolean).join(" and ");
   if (!confirm(`For ${n} device${n === 1 ? "" : "s"} on ${shown.receivingName || "the receiving tenant"}: ${what}?\n\nThis writes to the receiving tenant.`)) return;
   // The options Apply sends are the ones the preview used, so it does what the table showed.
   const seq = ++tamperSeq;
@@ -919,6 +926,7 @@ const TAMPER_TAG = {
   requested: ["tag-warn", "requested"],
   failed: ["tag-bad", "failed"],
   "already-on": ["tag-muted", "already on"],
+  "cant-turn-on": ["tag-warn", "can't turn on"],
   "not-supported": ["tag-muted", "no tamper protection"],
   "out-of-scope": ["tag-muted", "left out"],
   "not-arrived": ["tag-muted", "not arrived"],
