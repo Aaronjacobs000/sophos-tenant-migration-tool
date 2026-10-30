@@ -11,9 +11,9 @@ import { startHttp } from "./helpers/http.mjs";
 
 const fake = createFakeSophos();
 const { root, state } = await bootApp(fake);
-const FOURTH = fake.addTenant({ tenantId: "66666666-6666-4666-8666-666666666666", clientId: "fourth-client", secret: "fourth-secret", host: "https://api-four.example.test" });
-const FIFTH = fake.addTenant({ tenantId: "88888888-8888-4888-8888-888888888888", clientId: "fifth-client", secret: "fifth-secret", host: "https://api-five.example.test" });
-const SIXTH = fake.addTenant({ tenantId: "99999999-9999-4999-8999-999999999999", clientId: "sixth-client", secret: "sixth-secret", host: "https://api-six.example.test" });
+const FOURTH = fake.addTenant({ tenantId: "66666666-6666-4666-8666-666666666666", clientId: "fourth-client", secret: "fourth-secret", host: "https://api-four.test.sophos.com" });
+const FIFTH = fake.addTenant({ tenantId: "88888888-8888-4888-8888-888888888888", clientId: "fifth-client", secret: "fifth-secret", host: "https://api-five.test.sophos.com" });
+const SIXTH = fake.addTenant({ tenantId: "99999999-9999-4999-8999-999999999999", clientId: "sixth-client", secret: "sixth-secret", host: "https://api-six.test.sophos.com" });
 const { migrateDevicesRouter } = await import("../backend/dist/routes/migrate-devices.js");
 const http = await startHttp([migrateDevicesRouter]);
 after(() => http.close());
@@ -157,7 +157,7 @@ test("a tenant no label or job names keeps no name, and none is invented", async
 });
 
 test("partner credentials: a job's missing names come from the partner's tenant list", async () => {
-  const PARTNER = fake.addTenant({ tenantId: "77777777-7777-4777-8777-777777777777", clientId: "ptn-client", secret: "ptn-secret-value", host: "https://unused.example.test", idType: "partner" });
+  const PARTNER = fake.addTenant({ tenantId: "77777777-7777-4777-8777-777777777777", clientId: "ptn-client", secret: "ptn-secret-value", host: "https://unused.test.sophos.com", idType: "partner" });
   fake.onGlobal("GET", "/partner/v1/tenants", () => ({ body: {
     items: [SRC, DST, OTHER, FOURTH].map((t, i) => ({ id: t.tenantId, name: `Customer ${i + 1}`, apiHost: t.host, dataRegion: "eu02", dataGeography: "EU" })),
     pages: { current: 1, size: 100, total: 1, maxSize: 100 },

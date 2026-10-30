@@ -16,6 +16,8 @@
  *     which keeps the status, so the tool's own API can pass it on.
  *   - A redirect is refused instead of followed (SophosRedirectError), and
  *     never retried.
+ *   - The API host from whoami or the tenant list must be an https address
+ *     on sophos.com before the token goes on a request (UntrustedHostError).
  *
  * HTTP client for Sophos Central APIs. Handles region-aware routing, auth
  * headers, retries, and error mapping. Supports tenant-scoped requests
@@ -26,6 +28,7 @@ import type { TokenManager } from "../auth/token-manager.js";
 import type { TenantResolver } from "./tenant-resolver.js";
 import type { SophosApiError } from "../types/sophos.js";
 import { refuseRedirect } from "../redirect.js";
+import { sophosApiBase } from "../hosts.js";
 
 /** The advice on a write that ended without a clear answer. */
 export const UNCLEAR_WRITE_ADVICE = "The change may still have gone through: check the destination before trying again.";
@@ -94,7 +97,8 @@ export class SophosClient {
     path: string,
     options: RequestOptions = {},
   ): Promise<T> {
-    const apiHost = await this.tenantResolver.resolveApiHost(tenantId);
+    // The host comes from Sophos's answers: checked before the token goes anywhere.
+    const apiHost = sophosApiBase(await this.tenantResolver.resolveApiHost(tenantId));
     const token = await this.tokenManager.getToken();
 
     const url = new URL(`${apiHost}${path}`);
@@ -135,10 +139,11 @@ export class SophosClient {
     options: RequestOptions = {},
   ): Promise<T> {
     const identity = this.tenantResolver.getIdentity();
+    const global = sophosApiBase(identity.apiHosts.global);
     const token = await this.tokenManager.getToken();
     const idHeader = this.tenantResolver.getIdHeader();
 
-    const url = new URL(`${identity.apiHosts.global}${path}`);
+    const url = new URL(`${global}${path}`);
     if (options.params) {
       for (const [key, value] of Object.entries(options.params)) {
         if (value !== undefined && value !== "") {

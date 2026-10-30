@@ -6,13 +6,13 @@ export const SRC = {
   tenantId: "11111111-1111-4111-8111-111111111111",
   clientId: "src-client",
   secret: "src-secret",
-  host: "https://api-src.example.test",
+  host: "https://api-src.test.sophos.com",
 };
 export const DST = {
   tenantId: "22222222-2222-4222-8222-222222222222",
   clientId: "dst-client",
   secret: "dst-secret",
-  host: "https://api-dst.example.test",
+  host: "https://api-dst.test.sophos.com",
 };
 
 /** A third tenant, for pointing the tool at another pair. */
@@ -20,7 +20,7 @@ export const OTHER = {
   tenantId: "33333333-3333-4333-8333-333333333333",
   clientId: "oth-client",
   secret: "oth-secret",
-  host: "https://api-oth.example.test",
+  host: "https://api-oth.test.sophos.com",
 };
 
 const GLOBAL = "https://api.central.sophos.com";

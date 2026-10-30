@@ -24,6 +24,9 @@
 
 const AUTH_URL = "https://id.sophos.com/api/v2/oauth2/token";
 const WHOAMI_URL = "https://api.central.sophos.com/whoami/v1";
+// The tenant's API host comes from whoami, so it must be an https address on sophos.com
+// (no port, user name, path or query) before the token goes to it. Same rule as backend/src/sophos/hosts.ts.
+const SOPHOS_API_BASE = /^https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+sophos\.com$/;
 const POLICY_TYPES = (process.env.POLICY_TYPES ??
   "peripheral-control,application-control,server-peripheral-control,server-application-control")
   .split(",")
@@ -72,7 +75,11 @@ async function whoami(token) {
         "Run this with direct-tenant API credentials, or set a tenant explicitly.",
     );
   }
-  return { tenantId: w.id, apiHost };
+  const base = typeof apiHost === "string" && apiHost.endsWith("/") ? apiHost.slice(0, -1) : apiHost;
+  if (typeof base !== "string" || !SOPHOS_API_BASE.test(base)) {
+    throw new Error("Sophos named an API address outside sophos.com, so nothing was sent to it.");
+  }
+  return { tenantId: w.id, apiHost: base };
 }
 
 /**
