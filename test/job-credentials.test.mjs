@@ -10,7 +10,7 @@ import { startHttp } from "./helpers/http.mjs";
 
 const fake = createFakeSophos();
 const { root, state } = await bootApp(fake);
-const FOURTH = fake.addTenant({ tenantId: "66666666-6666-4666-8666-666666666666", clientId: "fourth-client", secret: "fourth-secret", host: "https://api-four.example.test" });
+const FOURTH = fake.addTenant({ tenantId: "66666666-6666-4666-8666-666666666666", clientId: "fourth-client", secret: "fourth-secret", host: "https://api-four.test.sophos.com" });
 const { migrateDevicesRouter } = await import("../backend/dist/routes/migrate-devices.js");
 const { logsRouter } = await import("../backend/dist/routes/logs.js");
 const { resetKeyCache, keyFilePath } = await import("../backend/dist/services/job-credentials.js");
@@ -246,7 +246,7 @@ test("an older job with no recorded tenants is not checked against a pair that d
 });
 
 test("partner credentials: one encrypted entry for both tenants, and the job keeps its tenants after a repoint", async () => {
-  const PARTNER = fake.addTenant({ tenantId: "77777777-7777-4777-8777-777777777777", clientId: "ptn-client", secret: "ptn-secret-value", host: "https://unused.example.test", idType: "partner" });
+  const PARTNER = fake.addTenant({ tenantId: "77777777-7777-4777-8777-777777777777", clientId: "ptn-client", secret: "ptn-secret-value", host: "https://unused.test.sophos.com", idType: "partner" });
   fake.onGlobal("GET", "/partner/v1/tenants", () => ({ body: {
     items: [SRC, DST, OTHER, FOURTH].map((t, i) => ({ id: t.tenantId, name: `Customer ${i + 1}`, apiHost: t.host, dataRegion: "eu02", dataGeography: "EU" })),
     pages: { current: 1, size: 100, total: 1, maxSize: 100 },
