@@ -25,11 +25,13 @@ for (const [file, names] of [
   ["search", ["searchRouter"]],
   ["checks", ["checksRouter"]],
   ["web-filters", ["migrateWebFiltersRouter"]],
+  ["ai-defense", ["migrateAiDefenseRouter"]],
   ["policies", ["policiesRouter"]],
   ["groups", ["groupsRouter"]],
   ["exclusions", ["exclusionsRouter"]],
   ["endpoints", ["endpointsRouter"]],
   ["web-filters", ["webFiltersRouter"]],
+  ["ai-defense", ["aiDefenseRouter"]],
 ]) {
   const mod = await import(`../backend/dist/routes/${file}.js`);
   for (const n of names) routers.push(mod[n]);
@@ -177,7 +179,7 @@ test("no POST route writes to a tenant when another site posts to it", async () 
   const posts = routers
     .flatMap((r) => r.stack.filter((l) => l.route?.methods.post).map((l) => l.route.path))
     .map((p) => "/api" + p.replace(":side", "dest").replace(":id", "local-1").replace(":section", "groups"));
-  assert.ok(posts.includes(MEMBERSHIP) && posts.includes("/api/dest/user-groups"), "the sweep covers the real routes");
+  assert.ok(posts.includes(MEMBERSHIP) && posts.includes("/api/dest/user-groups") && posts.includes("/api/migrate/ai-defense"), "the sweep covers the real routes");
   fake.reset();
   const before = (await readAudit(root)).length;
   for (const p of posts) {

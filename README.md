@@ -7,7 +7,7 @@
 
 A locally run web tool for moving configuration and devices between two Sophos Fusion (formerly Sophos Central) tenants.
 
-It connects to a source and a destination tenant through the public Sophos Fusion APIs, shows policies, groups, exclusions, web filtering and devices side by side, and moves the items you pick, including policy assignments. Policy clones, exclusion and web filtering copies and device migrations can be previewed with a dry run first, and every write is recorded in an audit log. Device moves use the two-tenant migration flow and show each device's progress live.
+It connects to a source and a destination tenant through the public Sophos Fusion APIs, shows policies, groups, exclusions, web filtering, AI Defense policies and devices side by side, and moves the items you pick, including policy assignments. Policy clones, exclusion, web filtering and AI Defense copies and device migrations can be previewed with a dry run first, and every write is recorded in an audit log. Device moves use the two-tenant migration flow and show each device's progress live.
 
 ![Dashboard showing the source to destination route, the four migration steps and the preload counts](docs/screenshot.png)
 
@@ -55,6 +55,19 @@ Checks from the Sophos web filtering guide:
 - A tenant holds at most 20 site lists, and a list at most 750 sites. A list that would pass either limit is not sent, and the preview says so.
 - Preset, category and category group names can differ between tenants. Before a profile is sent, its names are checked against the destination's (`GET /web-filters/v1/profiles/metadata`). A profile with a name the destination doesn't have is not sent, and the result names it. If the destination's names can't be read, the profile is sent and the result says the names were not checked.
 - A list or profile with the same name on both sides is compared. When the content matches it is *already there*; when it doesn't, it shows as *differs*, with what differs (sites, description, preset, category actions or site list rules). The results then offer to overwrite them. That asks twice, then replaces each one with the source version by `PUT`, keeping the destination's name. Each overwrite is audited.
+
+### AI Defense
+
+AI Defense policies copy to the destination through the Sophos Fusion AI Defense Policy API (GraphQL, v1), with the same credentials. The page lists both tenants' policies in priority order, with their state, rules, what they apply to and their sensors, and compares each source policy with the destination's. It says when a tenant is not set up for AI Defense: a destination in that state still takes copies, but Sophos enforces them only once AI Defense is licensed and set up there.
+
+- A copy brings the rules, the base rule (the Generative AI and app control category actions), description, tags, the starter template it came from, and the state. Rules name applications, categories, risk levels and compliance from Sophos's AI catalog, which is the same on every tenant.
+- The Endpoint sensor's scope names users, user groups, devices and device groups by ID. Each is matched on the destination the way policy assignments are: groups by name, users by email and then name, devices by hostname. A device that has not moved yet is pending; once its move lands, copy the policy again and only what is missing is added. Nothing is taken out of a destination policy's scope.
+- Sophos puts a new policy at the top of the order. A copy is created turned off, moved to the bottom (below the destination's own policies and the copies before it in the run), then turned on if the source policy is on. Sophos won't turn on a policy that names nobody, because it would apply to everyone, so a copy whose users, groups and devices are all missing stays off, and the result says so.
+- Not copied, with the reason in the results: the Firewall sensor (its scope names firewall groups and the firewalls' own web policies by ID), the DNS Protection and Protected Browser sensors, partner policies, and a base policy where the destination has none, because a base policy can't be turned off or deleted. The source's base policy pairs with the destination's whatever their names. Activity, the app inventory and the AI Defense settings and licence stay with each tenant.
+- Policies pair by name, ignoring case. Sophos accepts two policies with the same name, so a name more than one policy has is ambiguous and nothing is sent.
+- A policy on both sides is compared on its rules, base rule, description, tags, state and whether the Endpoint sensor is on. The results offer to overwrite one that differs. That asks twice, keeps the destination's name and place in the order, sends the destination's other sensors back as they are (an update replaces the whole sensor list), and turns the policy on or off to match. Sophos ignores an empty tag list, so tags the source doesn't have stay, and the result says so.
+- Each copy, overwrite and scope addition is read back by ID, and every write is audited. Destination policies can be deleted from a row menu to undo a copy, after a double confirmation; the base policy and partner policies can't be.
+- A tenant that Sophos Fusion does not hold, or that the credential can't reach there, says so on its side of the page.
 
 ### Groups
 
@@ -205,18 +218,20 @@ backend/
     log.ts                       # Ring-buffer logger with secret masking
     config/                      # .env read and write, credential checks and masking, HOST and ALLOWED_IPS
     sophos/
-      constants.ts               # Sophos auth URL and global API host
+      constants.ts               # Sophos auth URL, global API host and Fusion GraphQL URL
       tenant-context.ts          # Direct and partner tenant contexts
       auth/token-manager.ts      # OAuth2 client credentials and refresh (from sophos-mcp)
       client/
         sophos-client.ts         # HTTP client with read retries, rate limits, region routing (from sophos-mcp)
+        fusion-client.ts         # Sophos Fusion GraphQL client for AI Defense (from sophos-mcp)
         tenant-resolver.ts       # /whoami, tenant list, regional host cache (from sophos-mcp)
       types/                     # API response types
       api/                       # One wrapper per API: policies, groups, exclusions,
                                  # endpoints, migrations, web filters, runtime detection
-                                 # profiles, licences, settings, tamper protection, scans
+                                 # profiles, licences, settings, tamper protection, scans,
+                                 # AI Defense policies
     routes/                      # Express routes
-    services/                    # Policy, group, exclusion and web filter copies, device
+    services/                    # Policy, group, exclusion, web filter and AI Defense copies, device
                                  # migration, group membership, tamper protection and scans
                                  # after arrival, pre-flight, licence and tamper protection checks
     compare/json-diff.ts         # Small structural diff

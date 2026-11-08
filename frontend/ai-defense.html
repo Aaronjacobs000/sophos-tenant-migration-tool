@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Defense · Sophos Fusion Tenant Migration</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+</head>
+<body class="shell">
+  <div class="bg" aria-hidden="true"><div class="bg-glow bg-glow-a"></div><div class="bg-glow bg-glow-b"></div><div class="bg-glow bg-glow-c"></div><div class="bg-noise"></div></div>
+  <aside id="app-rail" class="rail"></aside>
+  <div class="shell-main">
+  <header id="app-nav" class="topbar"></header>
+
+  <main class="page-main">
+    <h1>AI Defense policies</h1>
+    <p class="page-lead">AI Defense policies on both tenants, in priority order. A copy brings a policy's rules, base rule, tags
+      and state, and the users, user groups, devices and device groups it applies to where the destination has a match:
+      mirror the groups first. A copy is created at the bottom of the destination's order and turned on if the source's is on.
+      The Firewall, DNS and Browser sensors, partner policies and a missing base policy are not copied.
+      To undo a copy, delete it from its row menu. A tick marks a source policy that is already on the destination.</p>
+
+    <div id="ai-status"></div>
+
+    <div class="panel-toolbar toolbar-bar">
+      <span id="match-summary" class="hint">Comparing</span>
+      <span class="spacer"></span>
+      <button id="refresh" class="btn btn-small"><span data-icon="refresh"></span>Refresh</button>
+    </div>
+
+    <div class="split-row">
+      <section class="panel-card">
+        <div class="panel-toolbar">
+          <h2 class="side-title">Source</h2>
+          <span class="spacer"></span>
+          <button id="select-all-source" class="btn btn-small">Select all</button>
+          <button id="clear-source" class="btn btn-small">Clear</button>
+        </div>
+        <div id="table-source" class="table-wrap-narrow"><div class="empty-state">Loading</div></div>
+      </section>
+      <section class="panel-card">
+        <div class="panel-toolbar">
+          <h2 class="side-title is-dest">Destination</h2>
+          <span class="spacer"></span>
+        </div>
+        <div id="table-dest" class="table-wrap-narrow"><div class="empty-state">Loading</div></div>
+      </section>
+    </div>
+  </main>
+
+  <div id="selection-basket" class="selection-basket hidden">
+    <span class="basket-text"><strong id="basket-count">0</strong> <span id="basket-noun">policies selected</span></span>
+    <span class="basket-sep"></span>
+    <button id="basket-preview" class="btn">Preview</button>
+    <button id="basket-copy" class="btn btn-primary">Copy to destination</button>
+  </div>
+
+  <footer id="page-footer" class="page-footer"></footer>
+  </div>
+  <script type="module" src="/js/page-ai-defense.js"></script>
+</body>
+</html>

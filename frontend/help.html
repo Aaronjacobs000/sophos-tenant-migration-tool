@@ -27,6 +27,7 @@
         <ul>
           <li>Endpoint policies: list, compare settings, and clone or overwrite on the destination with their assignments.</li>
           <li>Web filtering: copy site lists and profiles.</li>
+          <li>AI Defense policies: compare, and copy or overwrite on the destination with the users, groups and devices they apply to.</li>
           <li>Endpoint and user groups: mirror by name and description. Members follow after a device move (see below).</li>
           <li>Exclusions and lists: scanning, allowed and blocked items, isolation, intrusion prevention, exploit mitigation, Website Management and TLS decryption exclusions.</li>
           <li>Device migration: the two-tenant migration flow. Devices keep their identity and check in to the destination the next time they are online.</li>
@@ -141,6 +142,32 @@
       </section>
 
       <section class="panel-card">
+        <h2>AI Defense</h2>
+        <p>The AI Defense page copies AI Defense policies: their rules, base rule, description, tags, starter template
+          and state. Rules name applications, categories, risk levels and compliance from Sophos's AI catalog, which
+          is the same on every tenant.</p>
+        <p>The users, user groups, devices and device groups a policy applies to are matched on the destination the
+          way policy assignments are: groups by name, users by email and then name, devices by hostname. Mirror the
+          groups first. A device that has not moved yet is pending: once its move lands, copy the policy again, and
+          only what is missing is added. Nothing is taken out of a destination policy's scope.</p>
+        <p>A copy is created turned off, moved to the bottom of the destination's order, below the copies before it,
+          then turned on if the source policy is on. Sophos won't turn on a policy that names nobody, because it would
+          apply to everyone, so a copy whose users, groups and devices are all missing stays off and the result says so.</p>
+        <p>Not copied, each with the reason in the results: the Firewall sensor, whose scope names firewall groups and
+          the firewalls' own web policies by ID; the DNS Protection and Protected Browser sensors; partner policies;
+          and a base policy where the destination has none, because a base policy can't be deleted. The source's base
+          policy pairs with the destination's whatever their names. Activity, the app inventory and the AI Defense
+          settings and licence stay with each tenant.</p>
+        <p>A policy already on the destination by name is compared: rules, base rule, description, tags, state and
+          whether the Endpoint sensor is on. If it differs, the result offers to overwrite it. That asks twice, and keeps
+          the destination's name and place in the order. Sophos ignores an empty tag list, so tags the source doesn't
+          have stay, and the result says so. A destination not set up for AI Defense still takes copies, but Sophos
+          enforces them only once AI Defense is licensed and set up there.</p>
+        <p>To undo a copy, delete it from its row menu, after a double confirmation. The base policy and partner
+          policies can't be deleted.</p>
+      </section>
+
+      <section class="panel-card">
         <h2>Policies</h2>
         <p>A clone adds each policy's assignments on the destination: device groups and user groups matched by name,
           users by email and then name, and devices by hostname, passing over an old record a device left behind
@@ -161,18 +188,18 @@
           <li>Website Management entries (Exclusions page), because web control policies refer to their tags.</li>
           <li>Web filtering site lists, then profiles.</li>
           <li>Linux runtime detection profiles, created on the destination by hand, because their policies refer to them.</li>
-          <li>Groups, then policies, so each policy can be assigned to the groups with the same names.</li>
+          <li>Groups, then policies and AI Defense policies, so each can be assigned to the groups with the same names.</li>
           <li>Other exclusions and lists.</li>
-          <li>Devices, then group membership from the job page, then clone the policies again to add the devices they are assigned to.</li>
+          <li>Devices, then group membership from the job page, then clone the policies and copy the AI Defense policies again to add the devices they are assigned to.</li>
           <li>Tamper protection on the arrived devices from the job page, and a scan if you want one.</li>
         </ol>
       </section>
 
       <section class="panel-card">
         <h2>Dry runs</h2>
-        <p>Policies, exclusions, web filtering, device migrations, group membership, tamper protection and scans can be
-          previewed first: the <strong>Preview</strong> buttons on the Policies, Compare, Exclusions and Web filtering
-          pages, <strong>Preview (dry run)</strong> on Start migration, and <strong>Preview</strong> on the job page's
+        <p>Policies, exclusions, web filtering, AI Defense policies, device migrations, group membership, tamper protection
+          and scans can be previewed first: the <strong>Preview</strong> buttons on the Policies, Compare, Exclusions,
+          Web filtering and AI Defense pages, <strong>Preview (dry run)</strong> on Start migration, and <strong>Preview</strong> on the job page's
           Group membership card, Tamper protection card and Scan arrived devices card return the plan the server
           <em>would</em> carry out without touching the destination.
           A policy preview lists each assignment it would add and each one it can't match, with the reason. Use them

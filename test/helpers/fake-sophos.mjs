@@ -25,6 +25,7 @@ export const OTHER = {
 
 const GLOBAL = "https://api.central.sophos.com";
 const AUTH = "https://id.sophos.com/api/v2/oauth2/token";
+const FUSION = "https://api.taegis.sophos.com/graphql";
 
 export function createFakeSophos() {
   const calls = [];
@@ -33,6 +34,8 @@ export function createFakeSophos() {
   // routes[tenantId] = [{ method, path (string or RegExp), handler(req) }]
   const routes = { [SRC.tenantId]: [], [DST.tenantId]: [], [OTHER.tenantId]: [] };
   const globalRoutes = [];
+  // fusionRoutes[tenantId] = handler(req) for the Fusion GraphQL endpoint. A tenant without one answers as not on Fusion.
+  const fusionRoutes = {};
   // Tenants whose API credential has been deleted: sign-in and every call with its token are refused.
   const revoked = new Set();
   let seq = 0;
@@ -65,9 +68,21 @@ export function createFakeSophos() {
       globalRoutes.unshift({ method, path, handler });
       return fake;
     },
-    /** Writes (anything but GET) made to a tenant data host. */
+    /**
+     * Answer Fusion GraphQL calls for a tenant. handler(req) gets { op, mutation, variables, query, headers }
+     * and returns { status, body } like a REST handler, usually { body: { data } } or { body: { errors } }.
+     */
+    onFusion(tenant, handler) {
+      fusionRoutes[tenant.tenantId] = handler;
+      return fake;
+    },
+    /** Writes made to a tenant: anything but GET on its data host, and Fusion GraphQL mutations. */
     writes() {
-      return calls.filter((c) => c.method !== "GET" && c.kind === "tenant");
+      return calls.filter((c) => (c.kind === "tenant" && c.method !== "GET") || (c.kind === "fusion" && c.mutation));
+    },
+    /** Fusion GraphQL mutations, in order. */
+    fusionWrites() {
+      return calls.filter((c) => c.kind === "fusion" && c.mutation);
     },
     reset() {
       calls.length = 0;
@@ -108,6 +123,20 @@ export function createFakeSophos() {
       // A tenant added with idType "partner" answers as a partner credential (no data region of its own).
       if (caller.idType === "partner") return json(200, { id: caller.tenantId, idType: "partner", apiHosts: { global: GLOBAL } });
       return json(200, { id: caller.tenantId, idType: "tenant", apiHosts: { global: GLOBAL, dataRegion: caller.host } });
+    }
+
+    if (url.href === FUSION) {
+      const op = /^\s*(query|mutation)\s+(\w+)/.exec(body?.query ?? "");
+      const tenantId = headers["x-tenant-id"];
+      const t = tenants[tenantId];
+      const label = t === SRC ? "src" : t === DST ? "dst" : t === OTHER ? "oth" : tenantId;
+      const req = { op: op?.[2], mutation: op?.[1] === "mutation", variables: body?.variables ?? {}, query: body?.query, headers, caller };
+      calls.push({ kind: "fusion", tenant: label, method, path: url.pathname, ...req });
+      const handler = fusionRoutes[tenantId];
+      if (!handler) {
+        return json(503, { message: `error invoking downstream api\ntenantsv4.APIClient.GetTenant: input:1:30: tenant ${tenantId} not found or not accessible` });
+      }
+      return respond(await handler(req));
     }
 
     const req = { method, url, path: url.pathname, query: Object.fromEntries(url.searchParams), headers, body, caller };

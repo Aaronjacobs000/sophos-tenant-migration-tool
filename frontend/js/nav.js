@@ -13,6 +13,7 @@ const NAV = [
   { group: "Configuration", items: [
     { href: "/policies.html", label: "Policies", icon: "shield", also: ["/policy-compare.html", "/policy-detail.html"] },
     { href: "/web-filtering.html", label: "Web filtering", icon: "globe" },
+    { href: "/ai-defense.html", label: "AI Defense", icon: "sparkle" },
     { href: "/groups.html", label: "Groups", icon: "folders" },
     { href: "/exclusions.html", label: "Exclusions", icon: "filter" },
   ] },
