@@ -66,10 +66,10 @@ export class SophosHttpError extends Error {
 }
 
 /** Network errors raised before a connection opens, when no request reached Sophos. */
-const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"]);
+export const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"]);
 
 /** The system error code behind a failed fetch, if there is one. */
-function networkCode(error: unknown): string | undefined {
+export function networkCode(error: unknown): string | undefined {
   const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
   const code = cause?.code ?? (error as { code?: unknown } | null)?.code;
   return typeof code === "string" ? code : undefined;

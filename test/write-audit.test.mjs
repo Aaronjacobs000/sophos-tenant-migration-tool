@@ -71,6 +71,30 @@ fake.on(DST, "GET", "/endpoint/v1/endpoint-groups/dg-fin/endpoints", () => ({ bo
 // The moved device's record on the receiving tenant, for the tamper protection and scan actions.
 fake.on(DST, "GET", "/endpoint/v1/endpoints/new-device", () => ({ body: { id: "new-device", hostname: "WIN10", tamperProtectionEnabled: false, tamperProtectionSupported: true } }));
 
+// AI Defense (Fusion GraphQL): a source policy to copy, and a destination policy to delete. A refused
+// mutation answers 400, as the GraphQL layer does for input it rejects. A copy reads back by ID but is
+// left out of the list, so each request here copies again.
+const aiPolicy = (id, name) => ({
+  id, name, rank: 1, state: "DISABLED", origin: "CUSTOM", kind: "TENANT", rules: [], version: 1, tags: {},
+  baseRule: { generativeAiCategoryAction: "ALLOW", appControlCategoryAction: null },
+  sensors: { endpoint: { enabled: true, scope: {} }, firewall: null, dns: null, browser: null },
+});
+for (const [tenant, start] of [[SRC, [aiPolicy("aid-1", "Staff")]], [DST, [aiPolicy("aid-9", "Old copy")]]]) {
+  const copies = [];
+  fake.onFusion(tenant, (req) => {
+    if (req.mutation) {
+      if (refuse(tenant, "POST", "/graphql")) return { status: 400, body: { errors: [{ message: "refused by the test" }] } };
+      if (req.op.endsWith("DeletePolicy")) return { body: { data: { deletePolicy: true } } };
+      const created = aiPolicy(fake.nextId("aid"), req.variables.input?.name ?? "copy");
+      copies.push(created);
+      return { body: { data: { createPolicy: created } } };
+    }
+    if (req.op.endsWith("Policies")) return { body: { data: { policies: { pageInfo: { hasNextPage: false, endCursor: null }, policies: start } } } };
+    if (req.op.endsWith("Policy")) return { body: { data: { policy: [...start, ...copies].find((p) => p.id === req.variables.id) ?? null } } };
+    return { body: { data: { secureAITenantSettings: null } } };
+  });
+}
+
 /** The job, with its device checked in on the receiving tenant. */
 async function seedArrivedJob() {
   await seedJob({ checkIns: { [DEVICE]: { state: "checked-in", newId: "new-device", checkedInAt: recent } } });
@@ -106,6 +130,8 @@ const WRITES = {
   "DELETE /:side/exclusions/blocked-items/:id": ["del", "/api/dest/exclusions/blocked-items/e-9"],
   "POST /:side/web-filters/delete": ["post", "/api/dest/web-filters/delete", { siteListIds: ["dl-1"] }],
   "POST /migrate/web-filters": ["post", "/api/migrate/web-filters", { siteListIds: ["sl-1"] }],
+  "POST /migrate/ai-defense": ["post", "/api/migrate/ai-defense", { policyIds: ["aid-1"] }],
+  "DELETE /:side/ai-defense/policies/:id": ["del", "/api/dest/ai-defense/policies/aid-9"],
   "POST /migrate/policies": ["post", "/api/migrate/policies", { policyIds: ["p-1"] }],
   "POST /migrate/groups": ["post", "/api/migrate/groups", { groupIds: ["g-1"] }],
   "POST /migrate/user-groups": ["post", "/api/migrate/user-groups", { userGroupIds: ["u-1"] }],

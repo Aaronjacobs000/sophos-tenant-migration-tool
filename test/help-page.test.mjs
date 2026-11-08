@@ -34,6 +34,7 @@ test("Help's Dry runs card names the Preview buttons the pages have, and the pag
     ["policies.html", "Preview", "Policies"],
     ["exclusions.html", "Preview", "Exclusions"],
     ["web-filtering.html", "Preview", "Web filtering"],
+    ["ai-defense.html", "Preview", "AI Defense"],
     ["migrate.html", "Preview (dry run)", "Start migration"],
     ["migrate-job-detail.html", "Preview", "Group membership card"],
   ]) {

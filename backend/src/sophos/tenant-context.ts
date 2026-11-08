@@ -15,6 +15,7 @@ import {
   type TenantInfo,
 } from "./client/tenant-resolver.js";
 import { SophosClient } from "./client/sophos-client.js";
+import { FusionClient } from "./client/fusion-client.js";
 
 export type TenantLabel = "source" | "dest";
 
@@ -38,6 +39,8 @@ export interface PartnerCredentials {
 export interface TenantContext {
   label: TenantLabel;
   client: SophosClient;
+  /** The Sophos Fusion GraphQL client, with the same credential (AI Defense policies). */
+  fusion: FusionClient;
   tenantId: string;
   summary: TenantSummary;
 }
@@ -78,6 +81,7 @@ export async function createDirectContext(
   return {
     label,
     client,
+    fusion: new FusionClient(tm),
     tenantId,
     summary: {
       tenantId,
@@ -95,6 +99,7 @@ export interface PartnerContext {
   tokenManager: TokenManager;
   tenantResolver: TenantResolver;
   client: SophosClient;
+  fusion: FusionClient;
   identity: CallerIdentity;
   tenants: TenantInfo[];
   label?: string;
@@ -125,6 +130,7 @@ export async function createPartnerContext(
     tokenManager: tm,
     tenantResolver: tr,
     client,
+    fusion: new FusionClient(tm),
     identity,
     tenants,
     label: creds.label?.trim() || undefined,
@@ -150,6 +156,7 @@ export function partnerSideContext(
   return {
     label,
     client: pctx.client,
+    fusion: pctx.fusion,
     tenantId,
     summary: {
       tenantId,
